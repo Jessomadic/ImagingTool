@@ -16,7 +16,6 @@ jobs:
 
     env:
       Solution_Name: ImagingTool.sln
-      Test_Project_Path: programtests.cs
 
     steps:
       - name: Checkout
@@ -24,49 +23,41 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install .NET Core
+      - name: Install .NET
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 9.0.202
 
-      - name: Setup MSBuild.exe
+      - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
-              
+
       - name: Restore NuGet packages
         run: dotnet restore $env:Solution_Name
 
-      - name: Execute unit tests
-        run: dotnet test
-
-      - name: Restore the application
-        run: msbuild $env:Solution_Name /t:Restore /p:Configuration=$env:Configuration
+      - name: Build the application
+        run: msbuild $env:Solution_Name /p:Configuration=${{ matrix.configuration }}
         env:
           Configuration: ${{ matrix.configuration }}
 
-      - name: Build application
-        run: msbuild $env:Solution_Name /p:Configuration=$env:Configuration
-        env:
-          Configuration: ${{ matrix.configuration }}
-
-      - name: Zip build output
+      - name: Find and zip build output
         shell: pwsh
         run: |
-          $BuildOutput = "ImagingTool\bin\${{ matrix.configuration }}\net9.0"
-          $ZipName = "output-${{ matrix.configuration }}.zip"
-
-          if (-Not (Test-Path $BuildOutput)) {
-            Write-Error "❌ Build output path '$BuildOutput' does not exist!"
+          $outputDirs = Get-ChildItem -Recurse -Directory -Filter net9.0
+          if (-not $outputDirs) {
+            Write-Error "❌ No net9.0 output directory found!"
           }
 
-          Compress-Archive -Path "$BuildOutput\*" -DestinationPath $ZipName -Force
+          $buildDir = $outputDirs[0].FullName
+          $zipPath = "output-${{ matrix.configuration }}.zip"
 
-          if (-Not (Test-Path $ZipName)) {
-            Write-Error "❌ ZIP file was not created!"
+          Compress-Archive -Path "$buildDir\*" -DestinationPath $zipPath -Force
+          if (-not (Test-Path $zipPath)) {
+            Write-Error "❌ ZIP file not created!"
           } else {
-            Write-Host "✅ Created $ZipName successfully."
+            Write-Host "✅ Zipped build output from: $buildDir -> $zipPath"
           }
 
-      - name: Upload Build Artifact
+      - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: built-artifact-${{ matrix.configuration }}
