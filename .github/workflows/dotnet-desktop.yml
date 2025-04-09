@@ -51,9 +51,12 @@ jobs:
       - name: Zip build output
         run: |
           $OutputDir = "output-${{ matrix.configuration }}"
-          mkdir $OutputDir
-          Copy-Item -Path "**\bin\${{ matrix.configuration }}\net*" -Recurse -Destination $OutputDir
-          Compress-Archive -Path "$OutputDir\*" -DestinationPath "${OutputDir}.zip"
+          New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
+          Copy-Item -Path "**\bin\${{ matrix.configuration }}\net*\*" -Recurse -Destination $OutputDir -Force
+          Compress-Archive -Path "$OutputDir\*" -DestinationPath "$OutputDir.zip" -Force
+          if (-Not (Test-Path "$OutputDir.zip")) {
+          Write-Error "ZIP file was not created!"
+          }
 
       - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
