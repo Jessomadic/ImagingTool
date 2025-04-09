@@ -4,7 +4,7 @@ on:
   workflow_run:
     workflows: ["dotnet-desktop.yml"]
     types:
-      - completed
+      - success
 
 jobs:
   publish:
