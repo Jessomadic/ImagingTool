@@ -16,7 +16,7 @@ jobs:
 
     env:
       Solution_Name: ImagingTool.sln
-      Test_Project_Path: programtests.cs
+      #Test_Project_Path: programtests.cs
 
     steps:
       - name: Checkout
