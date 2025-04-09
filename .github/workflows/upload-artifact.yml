@@ -3,6 +3,9 @@ name: Upload Release Asset
 on:
   repository_dispatch:
     types: [trigger-upload-artifact-workflow]  # This event type should match the one in the first workflow
+permissions:
+  contents: read    # Allows access to repository contents
+  actions: read     # Allows reading and accessing workflow runs and artifacts
 
 jobs:
   publish:
@@ -23,6 +26,8 @@ jobs:
           name: built-artifact-Debug
           run_id: ${{ github.event.workflow_run.id }}
           path: ./artifact
+          github_token: ${{ secrets.PAT_TOKEN }}  # Use the PAT here
+
 
       - name: Tag the commit
         run: |
