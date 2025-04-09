@@ -1,4 +1,4 @@
-name: Build
+name: Upload Release Asset
 
 on:
   workflow_run:
@@ -7,18 +7,31 @@ on:
       - completed
 
 jobs:
-  build:
-    name: Upload Release Asset
+  publish:
+    name: Publish Release
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
-    runs-on: windows-2025 # or windows-2025 if it's custom runner
+    runs-on: windows-2025 # or windows-2025 if needed
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
+        with:
+          ref: ${{ github.event.workflow_run.head_branch }}
 
-      - name: Build project
+      - name: Download artifact from previous workflow
+        uses: dawidd6/action-download-artifact@v3
+        with:
+          workflow: dotnet-desktop.yml
+          name: built-artifact
+          run_id: ${{ github.event.workflow_run.id }}
+          path: ./artifact
+
+      - name: Tag the commit
         run: |
-          zip --junk-paths my-artifact README.md
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git tag v1.2.3-intermediate ${{ github.event.workflow_run.head_sha }}
+          git push origin v1.2.3-intermediate
 
       - name: Create Release
         id: create_release
@@ -26,18 +39,17 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: ${{ github.event.workflow_run.head_branch }}
-          release_name: Release ${{ github.event.workflow_run.head_branch }}
+          tag_name: v1.2.3-intermediate
+          release_name: Intermediate Release v1.2.3
           draft: false
-          prerelease: false
+          prerelease: true
 
       - name: Upload Release Asset
-        id: upload-release-asset
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./my-artifact.zip
-          asset_name: MWXImaging.zip
+          asset_path: ./artifact/my-app.zip
+          asset_name: my-app.zip
           asset_content_type: application/zip
