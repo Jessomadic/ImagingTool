@@ -172,10 +172,9 @@ namespace ImagingTool
             await CreateSystemImage(destination);
         }
 
-        // Primary backup routine with skipped file detection and robust retry logic.
         private static async Task CreateSystemImage(string destination)
         {
-            var sourceDrive = @"C:\";
+            var sourceDrive = @"C:\\";
             var logicalProcessorCount = Environment.ProcessorCount;
             var skippedFiles = new List<string>();
 
@@ -184,8 +183,8 @@ namespace ImagingTool
                 FileName = WimlibPath,
                 Arguments = $"capture {sourceDrive} {destination} " +
                             $"\"Backup Image\" \"System Backup\" " +
-                            $"--snapshot " +
-                            $"--no-acls " +
+                            "--snapshot " +
+                            "--no-acls " +
                             $"--threads={logicalProcessorCount}",
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
@@ -222,7 +221,6 @@ namespace ImagingTool
                     return;
                 Console.WriteLine($"Error: {e.Data}");
 
-                // When encountering write-protection errors, extract and process the file path.
                 if (e.Data.Contains("Access is denied") || e.Data.Contains("write-protected"))
                 {
                     string path = ExtractFilePathFromError(e.Data);
@@ -249,7 +247,6 @@ namespace ImagingTool
             process.BeginErrorReadLine();
             await process.WaitForExitAsync();
 
-            // Continue regardless of the main capture process exit code.
             if (skippedFiles.Any())
             {
                 Console.WriteLine("The following local files were skipped due to access issues:");
@@ -269,10 +266,8 @@ namespace ImagingTool
             }
         }
 
-        // Retry backup for a specific file using an update command.
         private static async Task RetryBackupForFile(string filePath, string destination, int maxAttempts = 3)
         {
-            // Skip retries if the file is cloud-only.
             if (IsCloudOnly(filePath))
             {
                 Console.WriteLine($"Skipping retry for cloud-only file: {filePath}");
@@ -287,7 +282,6 @@ namespace ImagingTool
                 var psi = new ProcessStartInfo
                 {
                     FileName = WimlibPath,
-                    // Adjust update command parameters (e.g., image index) as needed.
                     Arguments = $"update \"{destination}\" 1 \"{filePath}\"",
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
@@ -313,27 +307,23 @@ namespace ImagingTool
                 else
                 {
                     attempt++;
-                    await Task.Delay(1000); // Delay before retrying.
+                    await Task.Delay(1000);
                 }
             }
 
             if (!success)
             {
                 Console.WriteLine($"Final failure in backing up {filePath} after {maxAttempts} attempts.");
-                // Log the failure for further review.
                 File.AppendAllText("skipped.log", $"{filePath}{Environment.NewLine}");
             }
         }
 
-        // Checks if a file is cloud-only.
-        // If the file doesn't exist locally or has the RECALL_ON_OPEN attribute, assume it is cloud-only.
         private static bool IsCloudOnly(string path)
         {
             try
             {
                 if (!File.Exists(path))
                 {
-                    // If the file does not exist locally, assume it's cloud-only.
                     return true;
                 }
                 var attributes = File.GetAttributes(path);
@@ -346,7 +336,6 @@ namespace ImagingTool
             }
         }
 
-        // Extracts a file or folder path from an error message by looking for quoted substrings.
         private static string ExtractFilePathFromError(string errorMessage)
         {
             int firstQuote = errorMessage.IndexOf('"');
