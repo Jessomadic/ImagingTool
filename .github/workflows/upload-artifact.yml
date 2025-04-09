@@ -22,9 +22,10 @@ jobs:
         uses: dawidd6/action-download-artifact@v3
         with:
           workflow: dotnet-desktop.yml
-          name: built-artifact
+          name: built-artifact-Debug  # <== This must match exactly
           run_id: ${{ github.event.workflow_run.id }}
           path: ./artifact
+
 
       - name: Tag the commit
         run: |
