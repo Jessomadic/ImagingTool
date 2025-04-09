@@ -1,31 +1,28 @@
-name: upload-artifact.yml
+name: Upload Release Asset
 
 on:
-  workflow_run:
-    workflows: ["dotnet-desktop.yml"]
-    types:
-      - success
+  repository_dispatch:
+    types: [trigger-upload-artifact-workflow]  # This event type should match the one in the first workflow
 
 jobs:
   publish:
     name: Publish Release
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
-    runs-on: windows-2025 # or windows-2025 if needed
+    if: ${{ github.event.action == 'trigger-upload-artifact-workflow' }}
+    runs-on: windows-2025
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_branch }}
+          ref: ${{ github.event.client_payload.head_branch }}
 
       - name: Download artifact from previous workflow
         uses: dawidd6/action-download-artifact@v3
         with:
           workflow: dotnet-desktop.yml
-          name: built-artifact-Debug  # <== This must match exactly
+          name: built-artifact-Debug
           run_id: ${{ github.event.workflow_run.id }}
           path: ./artifact
-
 
       - name: Tag the commit
         run: |
@@ -51,6 +48,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./artifact/my-app.zip
+          asset_path: ./artifact/output-Debug.zip
           asset_name: my-app.zip
           asset_content_type: application/zip
