@@ -70,8 +70,8 @@ jobs:
     # Install the .NET Core workload
     - name: Install .NET Core
       uses: actions/setup-dotnet@v4
-      uses: ImagingTool/.github/workflows/global.json
       with:
+        ImagingTool/.github/workflows/global.json
         dotnet-version: 9.0.200
 
     # Add  MSBuild to the PATH: https://github.com/microsoft/setup-msbuild
