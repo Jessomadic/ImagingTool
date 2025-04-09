@@ -5,6 +5,10 @@ on:
     branches: [ "master" ]
   pull_request:
     branches: [ "master" ]
+permissions:
+  contents: read  # This is needed to read the contents of the repository
+  actions: write  # This allows creating the repository_dispatch event
+
 
 jobs:
   build:
