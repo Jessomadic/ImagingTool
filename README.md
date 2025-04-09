@@ -1,7 +1,3 @@
-(https://github.com/Jessomadic/ImagingTool/actions/workflows/dotnet-desktop.yml/badge.svg)](https://github.com/Jessomadic/ImagingTool/actions/workflows/dotnet-desktop.yml)
-
-(https://github.com/Jessomadic/ImagingTool/actions/workflows/dotnet-desktop.yml/badge.svg)](https://github.com/Jessomadic/ImagingTool/actions/workflows/dotnet-desktop.yml)
-
 ImagingTool - System Imaging & Backup Tool (Prototype)
 
 How to Use:
