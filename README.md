@@ -1,4 +1,4 @@
-[![Debug Build Test](https://github.com/Jessomadic/ImagingTool/actions/workflows/dotnet-desktop.yml/badge.svg)](https://github.com/Jessomadic/ImagingTool/actions/workflows/dotnet-desktop.yml) [![Release Build Test](https://github.com/Jessomadic/ImagingTool/actions/workflows/dotnet-desktop.yml/badge.svg)](https://github.com/Jessomadic/ImagingTool/actions/workflows/dotnet-desktop.yml)
+[![Debug Build Test](https://github.com/Jessomadic/ImagingTool/actions/workflows/dotnet-desktop.yml/badge.svg)](https://github.com/Jessomadic/ImagingTool/actions/workflows/dotnet-desktop.yml)
 
 ImagingTool - System Imaging & Backup Tool (Prototype)
 
