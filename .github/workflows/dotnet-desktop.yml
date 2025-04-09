@@ -86,5 +86,12 @@ jobs:
       run: msbuild $env:Solution_Name /t:Restore /p:Configuration=$env:Configuration
       env:
         Configuration: ${{ matrix.configuration }}
+    # Uploads the build to prepare for release
+    - name: Upload Build Artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: built-artifact
+        path: ./path/to/output/my-app.zip
+
 
     
