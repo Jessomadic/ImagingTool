@@ -5,7 +5,7 @@ ImagingTool - System Imaging & Backup Tool (Prototype)
 How to Use:
 -----------
 1. Run the program with administrative privileges.
-2. It will check if Wimlib is available at C:\WimLib and download it if missing.
+2. It will check if Wimlib is available at C:\WimLib and then download it if missing.
 3. You will be prompted to choose a destination path for the image (e.g., D:\Backup.wim).
 4. The program will create a full image of the system boot drive.
 5. The image is created in WIM format and is multithreaded using wimlib.
