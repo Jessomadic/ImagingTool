@@ -16,7 +16,7 @@ jobs:
 
     env:
       Solution_Name: ImagingTool.sln
-      #Test_Project_Path: programtests.cs
+      Test_Project_Path: programtests.cs
 
     steps:
       - name: Checkout
@@ -35,13 +35,13 @@ jobs:
       - name: Restore NuGet packages
         run: dotnet restore $env:Solution_Name
 
-      #- name: Execute unit tests
-       # run: dotnet test
+      - name: Execute unit tests
+        run: dotnet test
 
-      #- name: Restore the application
-      #  run: msbuild $env:Solution_Name /t:Restore /p:Configuration=$env:Configuration
-       # env:
-       #   Configuration: ${{ matrix.configuration }}
+      - name: Restore the application
+        run: msbuild $env:Solution_Name /t:Restore /p:Configuration=$env:Configuration
+        env:
+          Configuration: ${{ matrix.configuration }}
 
       - name: Build application
         run: msbuild $env:Solution_Name /p:Configuration=$env:Configuration
