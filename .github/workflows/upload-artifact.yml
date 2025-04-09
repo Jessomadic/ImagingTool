@@ -1,4 +1,4 @@
-name: Upload Release Asset
+name: upload-artifact.yml
 
 on:
   workflow_run:
