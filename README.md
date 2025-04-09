@@ -1,4 +1,4 @@
-[![.NET Core Desktop](https://github.com/Jessomadic/ImagingTool/actions/workflows/dotnet-desktop.yml/badge.svg?branch=master&event=status)](https://github.com/Jessomadic/ImagingTool/actions/workflows/dotnet-desktop.yml) [![.NET Core Desktop](https://github.com/Jessomadic/ImagingTool/actions/workflows/dotnet-desktop.yml/badge.svg?branch=master&event=status)](https://github.com/Jessomadic/ImagingTool/actions/workflows/dotnet-desktop.yml)
+[![.NET Core Desktop](https://github.com/Jessomadic/ImagingTool/actions/workflows/dotnet-desktop.yml/badge.svg)](https://github.com/Jessomadic/ImagingTool/actions/workflows/dotnet-desktop.yml) [![.NET Core Desktop](https://github.com/Jessomadic/ImagingTool/actions/workflows/dotnet-desktop.yml/badge.svg)](https://github.com/Jessomadic/ImagingTool/actions/workflows/dotnet-desktop.yml)
 
 ImagingTool - System Imaging & Backup Tool (Prototype)
 
