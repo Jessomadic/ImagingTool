@@ -49,13 +49,21 @@ jobs:
           Configuration: ${{ matrix.configuration }}
 
       - name: Zip build output
+        shell: pwsh
         run: |
-          $OutputDir = "output-${{ matrix.configuration }}"
-          New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
-          Copy-Item -Path "**\bin\${{ matrix.configuration }}\net*\*" -Recurse -Destination $OutputDir -Force
-          Compress-Archive -Path "$OutputDir\*" -DestinationPath "$OutputDir.zip" -Force
-          if (-Not (Test-Path "$OutputDir.zip")) {
-          Write-Error "ZIP file was not created!"
+          $BuildOutput = "ImagingTool\bin\${{ matrix.configuration }}\net9.0"
+          $ZipName = "output-${{ matrix.configuration }}.zip"
+
+          if (-Not (Test-Path $BuildOutput)) {
+            Write-Error "❌ Build output path '$BuildOutput' does not exist!"
+          }
+
+          Compress-Archive -Path "$BuildOutput\*" -DestinationPath $ZipName -Force
+
+          if (-Not (Test-Path $ZipName)) {
+            Write-Error "❌ ZIP file was not created!"
+          } else {
+            Write-Host "✅ Created $ZipName successfully."
           }
 
       - name: Upload Build Artifact
