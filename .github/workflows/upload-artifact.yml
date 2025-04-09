@@ -2,7 +2,7 @@ name: Upload Release Asset
 
 on:
   workflow_run:
-    workflows: ["dotnet-desktop.yml"]
+    workflows: ["dotnet-desktop.yml"]  # Name of the first workflow, ensure this matches exactly
     types:
       - completed
 
@@ -10,19 +10,19 @@ jobs:
   publish:
     name: Publish Release
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
-    runs-on: windows-2025 # Windows runner
+    runs-on: windows-2025  # Ensure you're using the right runner for your setup
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_branch }}
+          ref: ${{ github.event.workflow_run.head_branch }}  # This ensures we're working with the branch from the first workflow
 
       - name: Download artifact from previous workflow
         uses: dawidd6/action-download-artifact@v3
         with:
-          workflow: dotnet-desktop.yml
-          name: built-artifact-Debug  # This should match the artifact name from the first workflow
+          workflow: dotnet-desktop.yml  # This must match the first workflow name exactly
+          name: built-artifact-Debug  # This must match the artifact name from the first workflow exactly
           run_id: ${{ github.event.workflow_run.id }}
           path: ./artifact
 
@@ -30,7 +30,7 @@ jobs:
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@users.noreply.github.com"
-          $current_date = Get-Date -Format "yyyy-MM-dd-hh-mm-ss-tt"
+          $current_date = Get-Date -Format "yyyy-MM-dd-hh-mm-ss-tt"  # 12-hour format
           $tag_name = "v$current_date"
           git tag $tag_name
           git push origin $tag_name
@@ -42,8 +42,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: ${{ steps.tag_commit.outputs.tag_name }}  # Use the dynamically created tag name
-          release_name: Intermediate Release ${{ steps.tag_commit.outputs.tag_name }}
+          tag_name: ${{ steps.tag_commit.outputs.tag_name }}  # Use the dynamic tag from the previous step
+          release_name: "Intermediate Release ${{ steps.tag_commit.outputs.tag_name }}"
           draft: false
           prerelease: true
 
@@ -53,6 +53,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./artifact/my-app.zip
-          asset_name: my-app.zip
+          asset_path: ./artifact/my-app.zip  # Path to your artifact from the first workflow
+          asset_name: my-app.zip  # Name of the artifact
           asset_content_type: application/zip
