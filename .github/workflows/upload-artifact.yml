@@ -2,9 +2,11 @@ name: Upload Release Asset
 
 on:
   workflow_run:
-    workflows: ["dotnet-desktop.yml"]  # Name of the first workflow, ensure this matches exactly
+    workflows: ["dotnet-desktop.yml"]
     types:
       - completed
+  workflow_dispatch:  # Add this to allow manual triggering
+      
 permissions:
   contents: write  # This is needed to read the contents of the repository
   actions: write  # This allows creating the repository_dispatch event
