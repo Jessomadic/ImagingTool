@@ -67,10 +67,10 @@ jobs:
           name: built-artifact-${{ matrix.configuration }}
           path: output-${{ matrix.configuration }}.zip
 
-      - name: Trigger second workflow (Upload Release Asset)
-        run: |
-          curl -X POST "https://api.github.com/repos/Jessomadic/ImagingTool/dispatches" `
-          -H "Authorization: Bearer ${{ secrets.PAT_TOKEN }}" `
-          -H "Content-Type: application/json" `
-          -d '{"event_type": "trigger-upload-artifact-workflow"}'
+     # - name: Trigger second workflow (Upload Release Asset)
+      #  run: |
+      #    curl -X POST "https://api.github.com/repos/Jessomadic/ImagingTool/dispatches" `
+      #    -H "Authorization: Bearer ${{ secrets.PAT_TOKEN }}" `
+       #   -H "Content-Type: application/json" `
+       #   -d '{"event_type": "trigger-upload-artifact-workflow"}'
 
