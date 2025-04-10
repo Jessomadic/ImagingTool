@@ -5,7 +5,10 @@ on:
     workflows: ["dotnet-desktop.yml"]  # Name of the first workflow, ensure this matches exactly
     types:
       - completed
-
+permissions:
+  contents: read  # This is needed to read the contents of the repository
+  actions: write  # This allows creating the repository_dispatch event
+  
 jobs:
   publish:
     name: Publish Release
@@ -27,6 +30,7 @@ jobs:
           path: ./artifact
 
       - name: Tag the commit with current date and time (12-hour format)
+        id: tag_commit
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@users.noreply.github.com"
@@ -34,6 +38,7 @@ jobs:
           $tag_name = "v$current_date"
           git tag $tag_name
           git push origin $tag_name
+          echo "tag_name=$tag_name" >> $env:GITHUB_OUTPUT
         shell: pwsh
 
       - name: Create Release
@@ -53,6 +58,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./artifact/my-app.zip  # Path to your artifact from the first workflow
-          asset_name: my-app.zip  # Name of the artifact
+          asset_path: ./artifact/output-Debug.zip  # Match the actual artifact name
+          asset_name: ImagingTool-Debug.zip  # Give it a clearer name
           asset_content_type: application/zip
