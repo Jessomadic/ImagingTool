@@ -5,7 +5,10 @@ on:
     workflows: ["dotnet-desktop.yml"]  # Name of the first workflow, ensure this matches exactly
     types:
       - completed
-
+permissions:
+  contents: read  # This is needed to read the contents of the repository
+  actions: write  # This allows creating the repository_dispatch event
+  
 jobs:
   publish:
     name: Publish Release
