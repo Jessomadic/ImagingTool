@@ -3,8 +3,7 @@ name: Upload Release Asset
 on:
   workflow_run:
     workflows: ["dotnet-desktop.yml"]
-    types:
-      - completed
+    types: [completed, requested]
   workflow_dispatch:  # Add this to allow manual triggering
       
 permissions:
