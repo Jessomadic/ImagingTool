@@ -24,7 +24,7 @@ jobs:
           ref: ${{ github.event.workflow_run.head_branch }}  # This ensures we're working with the branch from the first workflow
 
       - name: Download artifact from previous workflow
-        uses: dawidd6/action-download-artifact@v3
+        uses: dawidd6/action-download-artifact@v6
         with:
           workflow: dotnet-desktop.yml  # This must match the first workflow name exactly
           name: built-artifact-Debug  # This must match the artifact name from the first workflow exactly
