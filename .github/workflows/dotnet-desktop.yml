@@ -46,7 +46,7 @@ jobs:
       - name: Find and zip build output
         shell: pwsh
         run: |
-          $outputDirs = Get-ChildItem -Recurse -Directory -Filter net9.0
+          $outputDirs = Get-ChildItem -Recurse -Directory -Filter net9.0-windows
           if (-not $outputDirs) {
             Write-Error "❌ No net9.0 output directory found!"
           }

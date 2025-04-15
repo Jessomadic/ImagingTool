@@ -26,6 +26,7 @@ namespace ImagingTool
         public string DotNetRequiredVersion { get; set; } = "9.0"; // Default if not in JSON
         public string DotNetDownloadPageUrl { get; set; } = ""; // Loaded from JSON
         public string DotNetRuntimeInstallerUrl { get; set; } = ""; // Loaded from JSON
+        public string WimCompressionLevel { get; set; } = "Fast"; // Default to Fast if not in JSON
     }
 
 
@@ -364,30 +365,53 @@ namespace ImagingTool
             await CreateSystemImage(destination);
         }
 
-        private static async Task CreateSystemImage(string destination)
+                private static async Task CreateSystemImage(string destination)
         {
             string? systemDrive = Path.GetPathRoot(Environment.SystemDirectory); if (string.IsNullOrEmpty(systemDrive)) { throw new InvalidOperationException("Could not determine the system drive root."); }
-            Console.WriteLine($"\nStarting backup of system drive '{systemDrive}' to '{destination}'..."); Console.WriteLine("Using Volume Shadow Copy Service (VSS)."); var threads = Environment.ProcessorCount; Console.WriteLine($"Using {threads} threads for compression."); var configFileName = $"wimlib-config-{Guid.NewGuid()}.txt"; var configFilePath = Path.Combine(Path.GetTempPath(), configFileName); Console.WriteLine($"Using temporary config file for exclusions: {configFilePath}"); bool wimlibReportedError = false;
+            Console.WriteLine($"\nStarting backup of system drive '{systemDrive}' to '{destination}'..."); Console.WriteLine("Using Volume Shadow Copy Service (VSS)."); var threads = Environment.ProcessorCount; Console.WriteLine($"Using {threads} threads."); var configFileName = $"wimlib-config-{Guid.NewGuid()}.txt"; var configFilePath = Path.Combine(Path.GetTempPath(), configFileName); Console.WriteLine($"Using temporary config file for exclusions: {configFilePath}"); bool wimlibReportedError = false;
+
+            // --- Determine Compression Argument ---
+            string compressionArg;
+            string compressionLevelDisplay;
+            switch (Settings?.WimCompressionLevel?.ToLowerInvariant())
+            {
+                case "none":
+                    compressionArg = "none";
+                    compressionLevelDisplay = "None (Fastest, Largest File)";
+                    break;
+                case "maximum": // Maps to lzx for best compression
+                    compressionArg = "lzx"; // or "maximum"
+                    compressionLevelDisplay = "Maximum (Slowest, Smallest File)";
+                    break;
+                case "fast":
+                default: // Default to fast if setting is missing or invalid
+                    compressionArg = "fast"; // or "xpress"
+                    compressionLevelDisplay = "Fast (Balanced)";
+                    break;
+            }
+            Console.WriteLine($"Using Compression Level: {compressionLevelDisplay}");
+            // --- End Compression Argument ---
+
             try
             {
-                // Define exclusions - Consider making this configurable too
-                var exclusions = new List<string> { "[ExclusionList]", @"\pagefile.sys", @"\swapfile.sys", @"\hiberfil.sys", @"\System Volume Information", @"\RECYCLER", @"\$Recycle.Bin", @"\Windows\Temp\*.*", @"\Windows\Temp", @"\Users\*\AppData\Local\Temp\*.*", @"\Users\*\AppData\Local\Temp", @"\Temp\*.*", @"\Temp", @"\b042787fde8c8f3f_0" }; // Kept the specific exclusion from previous step
+                var exclusions = new List<string> { "[ExclusionList]", @"\pagefile.sys", @"\swapfile.sys", @"\hiberfil.sys", @"\System Volume Information", @"\RECYCLER", @"\$Recycle.Bin", @"\Windows\Temp\*.*", @"\Windows\Temp", @"\Users\*\AppData\Local\Temp\*.*", @"\Users\*\AppData\Local\Temp", @"\Temp\*.*", @"\Temp", @"\b042787fde8c8f3f_0" };
                 await File.WriteAllLinesAsync(configFilePath, exclusions);
 
-                var arguments = $"capture \"{systemDrive.TrimEnd('\\')}\" \"{destination}\" \"Windows System Backup\" \"Backup taken on {DateTime.Now:yyyy-MM-dd HH:mm:ss}\" --snapshot --config=\"{configFilePath}\" --compress=fast --threads={threads}";
+                // --- Use the determined compressionArg ---
+                var arguments = $"capture \"{systemDrive.TrimEnd('\\')}\" \"{destination}\" \"Windows System Backup\" \"Backup taken on {DateTime.Now:yyyy-MM-dd HH:mm:ss}\" --snapshot --config=\"{configFilePath}\" --compress={compressionArg} --threads={threads}";
+                // --- End argument change ---
+
                 Console.WriteLine($"\nExecuting WimLib command:"); Console.WriteLine($"{WimlibPath} {arguments}\n"); var psi = new ProcessStartInfo { FileName = WimlibPath, Arguments = arguments, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true, StandardOutputEncoding = System.Text.Encoding.UTF8, StandardErrorEncoding = System.Text.Encoding.UTF8 }; var startTime = DateTime.UtcNow; long totalBytesProcessed = 0L; long lastBytesProcessed = 0L; var lastUpdateTime = startTime; string lastFileName = "Initializing..."; object consoleLock = new object(); using var process = new Process { StartInfo = psi, EnableRaisingEvents = true }; var outputTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously); var errorTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
                 process.OutputDataReceived += (sender, e) => { if (e.Data == null) { outputTcs.TrySetResult(true); return; } };
                 process.ErrorDataReceived += (sender, e) => { if (e.Data == null) { errorTcs.TrySetResult(true); return; } var errorData = e.Data; if (errorData.IndexOf("ERROR", StringComparison.OrdinalIgnoreCase) >= 0 || errorData.IndexOf("Failed", StringComparison.OrdinalIgnoreCase) >= 0 || errorData.IndexOf("Cannot", StringComparison.OrdinalIgnoreCase) >= 0) { if (errorData.Contains("Parent inode") && errorData.Contains("was missing from the MFT listing")) { lock (consoleLock) { Console.ForegroundColor = ConsoleColor.Yellow; Console.WriteLine($"\n[WimLib Warning] Encountered known MFT inconsistency (attempting to continue due to exclusion): {errorData}"); Console.ResetColor(); } } else { lock (consoleLock) { Console.ForegroundColor = ConsoleColor.Red; Console.Error.WriteLine($"\n[WimLib Error] {errorData}"); Console.ResetColor(); } wimlibReportedError = true; } } try { const string filePrefix = "Adding file: ["; if (errorData.StartsWith(filePrefix) && errorData.EndsWith("]")) { lastFileName = errorData.Substring(filePrefix.Length, errorData.Length - filePrefix.Length - 1); } else if (errorData.Contains("GiB /", StringComparison.OrdinalIgnoreCase) && errorData.Contains("% done", StringComparison.OrdinalIgnoreCase)) { var match = Regex.Match(errorData, @"(\d+(?:[.,]\d+)?)\s*GiB\s*/\s*(\d+(?:[.,]\d+)?)\s*GiB\s*\((\d+)\s*%\s*done\)", RegexOptions.IgnoreCase); if (match.Success && double.TryParse(match.Groups[1].Value.Replace(',', '.'), NumberStyles.Any, CultureInfo.InvariantCulture, out double processedGiB) && double.TryParse(match.Groups[2].Value.Replace(',', '.'), NumberStyles.Any, CultureInfo.InvariantCulture, out double totalGiB) && double.TryParse(match.Groups[3].Value, NumberStyles.Any, CultureInfo.InvariantCulture, out double percentage)) { totalBytesProcessed = (long)(processedGiB * 1024 * 1024 * 1024); var now = DateTime.UtcNow; var elapsedTime = now - startTime; var timeSinceLastUpdate = (now - lastUpdateTime).TotalSeconds; double transferSpeedMbps = 0; if (timeSinceLastUpdate > 0.2 && totalBytesProcessed > lastBytesProcessed) { var bytesSinceLastUpdate = totalBytesProcessed - lastBytesProcessed; transferSpeedMbps = (bytesSinceLastUpdate / (1024.0 * 1024.0)) / timeSinceLastUpdate; lastBytesProcessed = totalBytesProcessed; lastUpdateTime = now; } else if (timeSinceLastUpdate > 5) { lastUpdateTime = now; } lock (consoleLock) { string progressLine = $"\rProgress: {percentage:F1}% ({processedGiB:F2}/{totalGiB:F2} GiB) | Speed: {transferSpeedMbps:F1} MB/s | Elapsed: {elapsedTime:hh\\:mm\\:ss} | File: {Truncate(lastFileName, 35)}"; Console.Write(new string(' ', Console.WindowWidth - 1) + "\r"); Console.Write(progressLine.PadRight(Console.WindowWidth - 1)); } } } } catch (Exception parseEx) { lock (consoleLock) { Console.WriteLine($"\n[Warning] Failed to parse wimlib output line: '{errorData}'. Error: {parseEx.Message}"); } } };
                 if (!process.Start()) { throw new InvalidOperationException($"Failed to start WimLib process: {WimlibPath}"); }
-                process.BeginOutputReadLine(); process.BeginErrorReadLine(); await process.WaitForExitAsync(); await Task.WhenAll(outputTcs.Task, errorTcs.Task); lock (consoleLock) { Console.Write(new string(' ', Console.WindowWidth - 1) + "\r"); }
-                Console.WriteLine("\nWimLib process finished.");
+                process.BeginOutputReadLine(); process.BeginErrorReadLine(); await process.WaitForExitAsync(); await Task.WhenAll(outputTcs.Task, errorTcs.Task); lock (consoleLock) { Console.Write(new string(' ', Console.WindowWidth - 1) + "\r"); } Console.WriteLine("\nWimLib process finished.");
                 if (process.ExitCode != 0) { throw new Exception($"WimLib process exited with error code: {process.ExitCode}. Check logs above."); }
                 if (wimlibReportedError) { throw new Exception($"WimLib reported one or more errors during execution (see logs above). Backup may be incomplete or corrupted."); }
             }
             catch (Exception ex) { Console.ForegroundColor = ConsoleColor.Red; Console.WriteLine($"\n--- Error during backup creation ---"); Console.WriteLine($"Message: {ex.Message}"); Console.ResetColor(); throw; }
             finally { if (File.Exists(configFilePath)) { try { File.Delete(configFilePath); Console.WriteLine($"Deleted temporary config file: {configFilePath}"); } catch (Exception ex) { Console.WriteLine($"Warning: Could not delete temporary config file '{configFilePath}'. {ex.Message}"); } } }
         }
-
 
         // --- Utility Functions ---
         private static bool IsRunningAsAdministrator()
