@@ -15,7 +15,7 @@ using System.Windows.Forms; // Requires <UseWindowsForms>true</UseWindowsForms> 
 // Add these for configuration
 using Microsoft.Extensions.Configuration;
 
-// PerformanceCounter references removed
+// Required for PerformanceCounter - ensure System.Diagnostics.PerformanceCounter NuGet if needed (usually included)
 
 
 namespace ImagingTool
@@ -41,7 +41,11 @@ namespace ImagingTool
         private static string WimlibDir => Path.Combine(AppContext.BaseDirectory, Settings?.WimlibSubDir ?? "wimlib");
         private static string WimlibPath => Path.Combine(WimlibDir, Settings?.WimlibExeName ?? "wimlib-imagex.exe");
 
-        // --- Performance Counters REMOVED ---
+        // --- Performance Counters ---
+        private static PerformanceCounter? sourceDiskReadCounter;
+        private static PerformanceCounter? destDiskWriteCounter;
+        private static string? sourceDiskInstanceName;
+        private static string? destDiskInstanceName;
 
         // --- Shared lock for logging ---
         private static readonly object logFileLock = new object();
@@ -51,8 +55,30 @@ namespace ImagingTool
         [STAThread]
         static async Task Main(string[] args)
         {
-            // ... (Config Loading unchanged) ...
-            try { /* Load Settings */ } catch (Exception ex) { /* Handle config error */ return; }
+            // Load Configuration First
+            try
+            {
+                var configuration = new ConfigurationBuilder()
+                    .SetBasePath(AppContext.BaseDirectory)
+                    .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
+                    .Build();
+
+                Settings = configuration.GetSection("AppSettings").Get<AppSettings>();
+
+                if (Settings == null ||
+                    string.IsNullOrWhiteSpace(Settings.WimlibDownloadUrl) ||
+                    string.IsNullOrWhiteSpace(Settings.DotNetDownloadPageUrl) ||
+                    string.IsNullOrWhiteSpace(Settings.DotNetRuntimeInstallerUrl))
+                {
+                    throw new InvalidOperationException("One or more required settings (URLs) are missing from appsettings.json.");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.ForegroundColor = ConsoleColor.Red; Console.WriteLine($"Fatal Error: Could not load or validate configuration from appsettings.json."); Console.WriteLine($"Error: {ex.Message}"); Console.ResetColor();
+                MessageBox.Show($"Fatal Error loading configuration (appsettings.json):\n\n{ex.Message}\n\nPlease ensure the file exists and is correctly formatted.", "Configuration Error", MessageBoxButtons.OK, MessageBoxIcon.Stop);
+                Console.WriteLine("\nPress any key to exit..."); Console.ReadKey(); return;
+            }
 
             Console.WriteLine("Windows System Imaging Tool");
             Console.WriteLine("---------------------------");
@@ -78,7 +104,13 @@ namespace ImagingTool
                 string? systemDriveLetter = Path.GetPathRoot(Environment.SystemDirectory)?.TrimEnd('\\');
                 if (!string.IsNullOrEmpty(systemDriveLetter) && IsVolumeDirty(systemDriveLetter)) { /* Handle dirty bit */ }
 
-                // --- Call to InitializePerformanceCounters REMOVED ---
+                // Initialize performance counters using resolved destination
+                string? destinationDriveLetter = Path.GetPathRoot(resolvedDestination)?.TrimEnd('\\');
+                if (!string.IsNullOrEmpty(systemDriveLetter) && !string.IsNullOrEmpty(destinationDriveLetter))
+                {
+                    InitializePerformanceCounters(systemDriveLetter, destinationDriveLetter);
+                }
+                else { Console.WriteLine("Warning: Could not determine source or destination drive letter for performance monitoring."); }
 
                 await PerformSystemBackup(resolvedDestination, skippedFilesLogPath);
 
@@ -86,32 +118,172 @@ namespace ImagingTool
                 if (string.IsNullOrWhiteSpace(destinationArg)) { MessageBox.Show("System backup completed successfully!", "Backup Success", MessageBoxButtons.OK, MessageBoxIcon.Information); }
             }
             catch (OperationCanceledException ex) { Console.ForegroundColor = ConsoleColor.Yellow; Console.WriteLine($"\nOperation cancelled: {ex.Message}"); Console.ResetColor(); }
-            catch (Exception ex) { /* ... Critical Error Handling unchanged ... */ }
+            catch (Exception ex)
+            {
+                Console.ForegroundColor = ConsoleColor.Red; Console.WriteLine($"\n--- Critical Error ---"); Console.WriteLine($"Message: {ex.Message}"); Console.ResetColor();
+                Console.WriteLine("\nStack Trace:"); Console.WriteLine(ex.StackTrace);
+                MessageBox.Show($"A critical error occurred:\n\n{ex.Message}\n\nSee console for details.", "Critical Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
             finally
             {
-                // --- Disposal of performance counters REMOVED ---
-                // ... (Keep console open logic unchanged) ...
+                // Dispose performance counters
+                sourceDiskReadCounter?.Dispose();
+                destDiskWriteCounter?.Dispose();
+                // Keep console open logic
+                if (!string.IsNullOrWhiteSpace(destinationArg) && Console.CursorTop > 5) { Console.WriteLine("\nPress any key to exit..."); Console.ReadKey(); } else if (string.IsNullOrWhiteSpace(destinationArg)) { Console.WriteLine("\nPress any key to exit..."); Console.ReadKey(); }
             }
         }
 
         // --- Helper to get destination path (unchanged) ---
-        private static async Task<string?> GetDestinationPath(string[] args) { /* ... unchanged ... */ return ""; }
+        private static async Task<string?> GetDestinationPath(string[] args)
+        {
+            string? destination = args.FirstOrDefault(a => a.StartsWith("-dest=", StringComparison.OrdinalIgnoreCase))
+                                       ?.Substring("-dest=".Length).Trim('"');
+            if (string.IsNullOrWhiteSpace(destination))
+            {
+                Console.WriteLine("Preparing file selection dialog...");
+                destination = await ShowSaveDialogOnStaThreadAsync();
+                if (string.IsNullOrWhiteSpace(destination))
+                {
+                    Console.WriteLine("Backup operation cancelled by user or dialog failed.");
+                    return null;
+                }
+            }
+            else
+            {
+                Console.WriteLine($"Using destination from command line: {destination}");
+                if (!destination.EndsWith(".wim", StringComparison.OrdinalIgnoreCase))
+                {
+                    destination += ".wim";
+                    Console.WriteLine($"Adjusted destination path to: {destination}");
+                }
+            }
+            return destination;
+        }
 
         // --- Requirement Initialization (unchanged) ---
-        private static async Task InitializeRequirements() { /* ... unchanged ... */ }
-        private static async Task<bool> CheckDotNetRuntime() { /* ... unchanged ... */ return true; }
-        private static bool IsDotNetRuntimeInstalled(string requiredVersionString) { /* ... unchanged ... */ return true; }
-        private static async Task<bool> InstallDotNetRuntime() { /* ... unchanged ... */ return true; }
-        private static async Task<bool> CheckWimLib() { /* ... unchanged ... */ return true; }
-        private static async Task<bool> InstallWimLib() { /* ... unchanged ... */ return true; }
+        private static async Task InitializeRequirements()
+        {
+            Console.WriteLine("\nChecking requirements...");
+            if (!await CheckDotNetRuntime()) { MessageBox.Show($"Failed requirement: .NET {Settings!.DotNetRequiredVersion} Runtime is missing or incompatible.\nPlease install it manually from:\n{Settings.DotNetDownloadPageUrl}", "Requirement Error", MessageBoxButtons.OK, MessageBoxIcon.Error); throw new InvalidOperationException($"Failed requirement: .NET {Settings.DotNetRequiredVersion} Runtime."); } else { Console.WriteLine($".NET {Settings.DotNetRequiredVersion} Runtime check passed."); }
+            if (!await CheckWimLib()) { MessageBox.Show($"Failed requirement: WimLib was not found or could not be installed.\nPlease ensure '{WimlibPath}' exists or try installing manually from {Settings.WimlibDownloadUrl}", "Requirement Error", MessageBoxButtons.OK, MessageBoxIcon.Error); throw new InvalidOperationException($"Failed requirement: WimLib installation."); } else { Console.WriteLine("WimLib check passed."); }
+            Console.WriteLine("Requirements met.");
+        }
+
+        private static async Task<bool> CheckDotNetRuntime()
+        {
+            Console.WriteLine($"Checking for .NET Runtime {Settings!.DotNetRequiredVersion} or later...");
+            if (!IsDotNetRuntimeInstalled(Settings.DotNetRequiredVersion))
+            {
+                Console.ForegroundColor = ConsoleColor.Yellow; Console.WriteLine($"Required .NET Runtime not found."); Console.WriteLine($"Please install .NET {Settings.DotNetRequiredVersion} Runtime (or later) manually."); Console.WriteLine($"Download from: {Settings.DotNetDownloadPageUrl}"); Console.ResetColor(); return false;
+            }
+            return true;
+        }
+
+        private static bool IsDotNetRuntimeInstalled(string requiredVersionString)
+        {
+            if (!Version.TryParse(requiredVersionString, out var requiredVersion)) { Console.WriteLine($"Warning: Invalid required .NET version format in config: {requiredVersionString}"); return false; }
+            try
+            {
+                var psi = new ProcessStartInfo { FileName = "dotnet", Arguments = "--list-runtimes", RedirectStandardOutput = true, UseShellExecute = false, CreateNoWindow = true, StandardOutputEncoding = System.Text.Encoding.UTF8 };
+                using var process = Process.Start(psi); if (process == null) { Console.WriteLine("Warning: Failed to start 'dotnet' process."); return false; }
+                string output = process.StandardOutput.ReadToEnd(); process.WaitForExit(); if (process.ExitCode != 0) { Console.WriteLine("Info: 'dotnet --list-runtimes' command failed or returned non-zero exit code. Assuming .NET is not installed or accessible."); return false; }
+                var runtimeRegex = new Regex(@"^Microsoft\.NETCore\.App\s+(\d+\.\d+\.\d+)", RegexOptions.Multiline); var matches = runtimeRegex.Matches(output);
+                foreach (Match match in matches.Cast<Match>()) { if (match.Groups.Count > 1 && Version.TryParse(match.Groups[1].Value, out var installedVersion)) { if (installedVersion.Major > requiredVersion.Major || (installedVersion.Major == requiredVersion.Major && installedVersion.Minor >= requiredVersion.Minor)) { Console.WriteLine($"Found compatible .NET Runtime: {installedVersion}"); return true; } } }
+                Console.WriteLine("No compatible .NET Runtime version found."); return false;
+            }
+            catch (System.ComponentModel.Win32Exception) { Console.WriteLine("Info: 'dotnet' command not found. Assuming .NET is not installed or not in system PATH."); return false; }
+            catch (Exception ex) { Console.WriteLine($"Warning: Error checking .NET runtime: {ex.Message}"); return false; }
+        }
+
+        private static async Task<bool> InstallDotNetRuntime() // Uses config URLs
+        {
+            var tempPath = Path.Combine(Path.GetTempPath(), $"dotnet-runtime-{Settings!.DotNetRequiredVersion}-installer.exe"); Console.WriteLine($"Downloading .NET Runtime installer to: {tempPath}");
+            try
+            {
+                using var client = new HttpClient(); client.DefaultRequestHeaders.Add("User-Agent", "ImagingTool/1.0"); await using var stream = await client.GetStreamAsync(Settings.DotNetRuntimeInstallerUrl); await using var fileStream = File.Create(tempPath); await stream.CopyToAsync(fileStream); Console.WriteLine("Download complete."); await fileStream.DisposeAsync();
+                Console.WriteLine("Running .NET Runtime installer (may require elevation)..."); var psi = new ProcessStartInfo { FileName = tempPath, Arguments = "/quiet /norestart", UseShellExecute = true, Verb = "runas" }; using var process = Process.Start(psi); if (process == null) { Console.WriteLine("Error: Failed to start installer process."); return false; }
+                await process.WaitForExitAsync();
+                if (process.ExitCode == 0 || process.ExitCode == 3010) { Console.WriteLine($".NET Runtime installation completed (Exit Code: {process.ExitCode}). A restart might be needed."); return true; } else { Console.WriteLine($"Error: .NET Runtime installation failed with Exit Code: {process.ExitCode}"); return false; }
+            }
+            catch (HttpRequestException ex) { Console.ForegroundColor = ConsoleColor.Red; Console.WriteLine($"Error downloading .NET Runtime: {ex.Message}"); Console.WriteLine($"Please check the URL ({Settings.DotNetRuntimeInstallerUrl}) in appsettings.json and your internet connection."); Console.ResetColor(); return false; }
+            catch (Exception ex) { Console.ForegroundColor = ConsoleColor.Red; Console.WriteLine($"Error during .NET Runtime installation: {ex.Message}"); Console.ResetColor(); Console.WriteLine($"Consider installing manually from: {Settings.DotNetDownloadPageUrl}"); return false; }
+            finally { if (File.Exists(tempPath)) { try { File.Delete(tempPath); } catch (IOException ex) { Console.WriteLine($"Warning: Could not delete temp file {tempPath}: {ex.Message}"); } } }
+        }
+
+        private static async Task<bool> CheckWimLib() // Uses config paths
+        {
+            Console.WriteLine($"Checking for WimLib at: {WimlibPath}");
+            if (!File.Exists(WimlibPath)) { Console.WriteLine("WimLib not found. Attempting to download and install..."); return await InstallWimLib(); }
+            return true;
+        }
+
+        private static async Task<bool> InstallWimLib() // Uses config URL and paths
+        {
+            var tempDir = Path.Combine(Path.GetTempPath(), $"wimlib-temp-{Guid.NewGuid()}"); var zipPath = Path.Combine(tempDir, "wimlib.zip"); Console.WriteLine($"Downloading WimLib from: {Settings!.WimlibDownloadUrl}"); Console.WriteLine($"Temporary download location: {zipPath}");
+            try
+            {
+                Directory.CreateDirectory(tempDir); using (var client = new HttpClient()) { client.DefaultRequestHeaders.Add("User-Agent", "ImagingTool/1.0"); Console.WriteLine("Starting download..."); var response = await client.GetAsync(Settings.WimlibDownloadUrl, HttpCompletionOption.ResponseHeadersRead); response.EnsureSuccessStatusCode(); await using var stream = await response.Content.ReadAsStreamAsync(); await using var fileStream = File.Create(zipPath); await stream.CopyToAsync(fileStream); Console.WriteLine("Download complete."); }
+                Console.WriteLine($"Extracting WimLib archive to: {tempDir}"); ZipFile.ExtractToDirectory(zipPath, tempDir, true);
+                string? foundExePath = Directory.GetFiles(tempDir, Settings.WimlibExeName, SearchOption.AllDirectories).FirstOrDefault(); if (string.IsNullOrEmpty(foundExePath)) { throw new FileNotFoundException($"'{Settings.WimlibExeName}' not found within the downloaded archive from {Settings.WimlibDownloadUrl}. Check WimlibExeName in appsettings.json."); }
+                string? sourceBinDir = Path.GetDirectoryName(foundExePath); if (sourceBinDir == null) { throw new DirectoryNotFoundException("Could not determine the source directory containing wimlib binaries."); }
+                Console.WriteLine($"Copying WimLib binaries from '{sourceBinDir}' to target directory: {WimlibDir}"); Directory.CreateDirectory(WimlibDir); int filesCopied = 0; foreach (var file in Directory.GetFiles(sourceBinDir, "*.*", SearchOption.TopDirectoryOnly)) { string extension = Path.GetExtension(file).ToLowerInvariant(); if (extension == ".exe" || extension == ".dll") { var destPath = Path.Combine(WimlibDir, Path.GetFileName(file)); File.Copy(file, destPath, true); Console.WriteLine($"  Copied: {Path.GetFileName(file)}"); filesCopied++; } }
+                if (filesCopied == 0) { throw new InvalidOperationException($"No .exe or .dll files were found to copy from '{sourceBinDir}'."); }
+                if (!File.Exists(WimlibPath)) { throw new FileNotFoundException($"WimLib installation failed. Expected executable not found at the target path: {WimlibPath}"); }
+                Console.WriteLine("WimLib installation successful."); return true;
+            }
+            catch (HttpRequestException ex) { Console.ForegroundColor = ConsoleColor.Red; Console.WriteLine($"Error downloading WimLib: {ex.Message}"); Console.WriteLine($"Please check the URL ({Settings.WimlibDownloadUrl}) in appsettings.json and your internet connection."); Console.ResetColor(); return false; }
+            catch (Exception ex) { Console.ForegroundColor = ConsoleColor.Red; Console.WriteLine($"Failed to install WimLib: {ex.Message}"); Console.ResetColor(); if (Directory.Exists(WimlibDir)) { try { Directory.Delete(WimlibDir, true); } catch (IOException ioEx) { Console.WriteLine($"Warning: Could not clean up target WimLib directory '{WimlibDir}': {ioEx.Message}"); } } return false; }
+            finally { if (Directory.Exists(tempDir)) { try { Directory.Delete(tempDir, true); } catch (IOException ioEx) { Console.WriteLine($"Warning: Could not clean up temp directory '{tempDir}': {ioEx.Message}"); } } }
+        }
 
         // --- Helper Method to Show Dialog on Dedicated STA Thread (unchanged) ---
-        private static Task<string?> ShowSaveDialogOnStaThreadAsync() { /* ... unchanged ... */ return Task.FromResult<string?>(""); }
+        private static Task<string?> ShowSaveDialogOnStaThreadAsync()
+        {
+            var tcs = new TaskCompletionSource<string?>(); var uiThread = new Thread(() => { try { using (var dialog = new SaveFileDialog()) { dialog.Title = "Select Backup Location and Filename"; dialog.Filter = "Windows Image Files (*.wim)|*.wim|All Files (*.*)|*.*"; dialog.DefaultExt = "wim"; dialog.FileName = $"SystemBackup_{DateTime.Now:yyyyMMdd_HHmmss}.wim"; dialog.RestoreDirectory = true; DialogResult result = dialog.ShowDialog(); if (result == DialogResult.OK && !string.IsNullOrWhiteSpace(dialog.FileName)) { tcs.TrySetResult(dialog.FileName); } else { tcs.TrySetResult(null); } } } catch (Exception ex) { tcs.TrySetException(ex); } }); uiThread.SetApartmentState(ApartmentState.STA); uiThread.IsBackground = true; uiThread.Start(); return tcs.Task;
+        }
 
         // --- Filesystem Dirty Bit Check (unchanged) ---
-        private static bool IsVolumeDirty(string driveLetter) { /* ... unchanged ... */ return false; }
+        private static bool IsVolumeDirty(string driveLetter)
+        {
+            if (string.IsNullOrEmpty(driveLetter) || !driveLetter.EndsWith(':')) { Console.WriteLine($"Warning: Invalid drive letter format for dirty check: {driveLetter}"); return false; }
+            Console.WriteLine($"Checking dirty bit for volume {driveLetter}...");
+            var psi = new ProcessStartInfo { FileName = "fsutil.exe", Arguments = $"dirty query {driveLetter}", RedirectStandardOutput = true, UseShellExecute = false, CreateNoWindow = true, StandardOutputEncoding = System.Text.Encoding.UTF8 };
+            try
+            {
+                using var process = Process.Start(psi); if (process == null) { Console.WriteLine("Warning: Failed to start fsutil process."); return false; }
+                var outputTask = process.StandardOutput.ReadToEndAsync(); if (!process.WaitForExit(5000)) { Console.WriteLine("Warning: fsutil process timed out. Assuming volume is not dirty."); try { process.Kill(); } catch { /* Ignore */ } return false; }
+                string output = outputTask.Result;
+                if (process.ExitCode == 0 && !string.IsNullOrWhiteSpace(output)) { Console.WriteLine($"fsutil output: {output.Trim()}"); if (output.Contains(" is Dirty", StringComparison.OrdinalIgnoreCase)) { return true; } if (output.Contains(" is NOT Dirty", StringComparison.OrdinalIgnoreCase)) { return false; } Console.WriteLine($"Warning: fsutil output format not recognized."); } else { Console.WriteLine($"Warning: fsutil dirty query failed or produced empty output (Exit Code: {process.ExitCode}). Assuming volume is not dirty."); }
+            }
+            catch (Exception ex) { Console.WriteLine($"Warning: Error running fsutil dirty query: {ex.Message}. Assuming volume is not dirty."); }
+            return false;
+        }
 
-        // --- Initialize Performance Counters method REMOVED ---
+        // --- Initialize Performance Counters (Includes improved logging from before) ---
+        private static void InitializePerformanceCounters(string sourceDrive, string destDrive)
+        {
+            Console.WriteLine("\nInitializing performance counters...");
+            sourceDiskReadCounter?.Dispose(); sourceDiskReadCounter = null; destDiskWriteCounter?.Dispose(); destDiskWriteCounter = null; sourceDiskInstanceName = null; destDiskInstanceName = null;
+            try
+            {
+                const string categoryName = "PhysicalDisk"; const string readCounterName = "Disk Read Bytes/sec"; const string writeCounterName = "Disk Write Bytes/sec";
+                if (!PerformanceCounterCategory.Exists(categoryName)) { Console.ForegroundColor = ConsoleColor.Red; Console.WriteLine($"ERROR: Performance counter category '{categoryName}' does not exist."); Console.ResetColor(); return; }
+                var category = new PerformanceCounterCategory(categoryName); string[] instanceNames = category.GetInstanceNames();
+                Console.WriteLine($"Available '{categoryName}' instances: [ {string.Join(" | ", instanceNames)} ]");
+
+                sourceDiskInstanceName = instanceNames.FirstOrDefault(name => name.Contains($" {sourceDrive.Trim(':')}"));
+                destDiskInstanceName = instanceNames.FirstOrDefault(name => name.Contains($" {destDrive.Trim(':')}"));
+
+                if (string.IsNullOrEmpty(sourceDiskInstanceName)) { Console.WriteLine($"Info: Could not find instance name containing ' {sourceDrive.Trim(':')}'. Trying fallback match for ' 0'..."); sourceDiskInstanceName = instanceNames.FirstOrDefault(name => Regex.IsMatch(name.Trim(), @"^\d+\s*") && name.Trim().StartsWith("0")); }
+                if (string.IsNullOrEmpty(destDiskInstanceName)) { Console.WriteLine($"Info: Could not find instance name containing ' {destDrive.Trim(':')}'. Trying fallback match..."); int sourceNum = -1; if (!string.IsNullOrEmpty(sourceDiskInstanceName) && int.TryParse(sourceDiskInstanceName.Split(' ')[0], out sourceNum)) { destDiskInstanceName = instanceNames.FirstOrDefault(name => Regex.IsMatch(name.Trim(), @"^\d+\s*") && name.Trim().StartsWith((sourceNum + 1).ToString())); } if (string.IsNullOrEmpty(destDiskInstanceName)) { destDiskInstanceName = instanceNames.FirstOrDefault(name => Regex.IsMatch(name.Trim(), @"^\d+\s*") && name.Trim().StartsWith("1")); } }
+
+                if (!string.IsNullOrEmpty(sourceDiskInstanceName)) { try { sourceDiskReadCounter = new PerformanceCounter(categoryName, readCounterName, sourceDiskInstanceName, readOnly: true); sourceDiskReadCounter.NextValue(); Console.ForegroundColor = ConsoleColor.Green; Console.WriteLine($"OK: Monitoring Read Speed for Disk Instance: '{sourceDiskInstanceName}'"); Console.ResetColor(); } catch (Exception ex) { Console.ForegroundColor = ConsoleColor.Red; Console.WriteLine($"ERROR: Failed to create Read counter for instance '{sourceDiskInstanceName}'. {ex.Message}"); Console.ResetColor(); sourceDiskInstanceName = null; } } else { Console.ForegroundColor = ConsoleColor.Red; Console.WriteLine($"ERROR: Could not automatically determine performance counter instance for source drive {sourceDrive}. Read speed monitoring disabled."); Console.ResetColor(); }
+                if (!string.IsNullOrEmpty(destDiskInstanceName)) { try { destDiskWriteCounter = new PerformanceCounter(categoryName, writeCounterName, destDiskInstanceName, readOnly: true); destDiskWriteCounter.NextValue(); Console.ForegroundColor = ConsoleColor.Green; Console.WriteLine($"OK: Monitoring Write Speed for Disk Instance: '{destDiskInstanceName}'"); Console.ResetColor(); } catch (Exception ex) { Console.ForegroundColor = ConsoleColor.Red; Console.WriteLine($"ERROR: Failed to create Write counter for instance '{destDiskInstanceName}'. {ex.Message}"); Console.ResetColor(); destDiskInstanceName = null; } } else { Console.ForegroundColor = ConsoleColor.Red; Console.WriteLine($"ERROR: Could not automatically determine performance counter instance for destination drive {destDrive}. Write speed monitoring disabled."); Console.ResetColor(); }
+            }
+            catch (Exception ex) { Console.ForegroundColor = ConsoleColor.Red; Console.WriteLine($"ERROR: Failed to initialize performance counters category. Disk speed monitoring disabled."); Console.WriteLine($"Error: {ex.Message}"); Console.ResetColor(); sourceDiskReadCounter?.Dispose(); sourceDiskReadCounter = null; destDiskWriteCounter?.Dispose(); destDiskWriteCounter = null; }
+            Console.WriteLine("Performance counter initialization finished.");
+        }
 
 
         // --- Backup Logic ---
@@ -124,6 +296,7 @@ namespace ImagingTool
             await CreateSystemImage(destination, skippedFilesLogPath);
         }
 
+        // CreateSystemImage with spinner AND performance counter sampling/display AND skipped file logging
         private static async Task CreateSystemImage(string destination, string skippedFilesLogPath)
         {
             string? systemDrive = Path.GetPathRoot(Environment.SystemDirectory); if (string.IsNullOrEmpty(systemDrive)) { throw new InvalidOperationException("Could not determine the system drive root."); }
@@ -180,11 +353,15 @@ namespace ImagingTool
                                 showSpinner = false; var match = Regex.Match(errorData, @"(\d+(?:[.,]\d+)?)\s*GiB\s*/\s*(\d+(?:[.,]\d+)?)\s*GiB\s*\((\d+)\s*%\s*done\)", RegexOptions.IgnoreCase); if (match.Success && double.TryParse(match.Groups[1].Value.Replace(',', '.'), NumberStyles.Any, CultureInfo.InvariantCulture, out double processedGiB) && double.TryParse(match.Groups[2].Value.Replace(',', '.'), NumberStyles.Any, CultureInfo.InvariantCulture, out double totalGiB) && double.TryParse(match.Groups[3].Value, NumberStyles.Any, CultureInfo.InvariantCulture, out double percentage))
                                 {
                                     totalBytesProcessed = (long)(processedGiB * 1024 * 1024 * 1024); var now = DateTime.UtcNow; var elapsedTime = now - startTime; var timeSinceLastUpdate = (now - lastUpdateTime).TotalSeconds; double transferSpeedMbps = 0; if (timeSinceLastUpdate > 0.2 && totalBytesProcessed > lastBytesProcessed) { var bytesSinceLastUpdate = totalBytesProcessed - lastBytesProcessed; transferSpeedMbps = (bytesSinceLastUpdate / (1024.0 * 1024.0)) / timeSinceLastUpdate; lastBytesProcessed = totalBytesProcessed; lastUpdateTime = now; } else if (timeSinceLastUpdate > 5) { lastUpdateTime = now; }
-                                    // --- Performance counter sampling REMOVED ---
+                                    // --- Sample Performance Counters ---
+                                    float readMBps = 0f; float writeMBps = 0f;
+                                    try { readMBps = sourceDiskReadCounter?.NextValue() / (1024f * 1024f) ?? 0f; writeMBps = destDiskWriteCounter?.NextValue() / (1024f * 1024f) ?? 0f; }
+                                    catch (InvalidOperationException perfEx) { lock (consoleLock) { Console.WriteLine($"\n[Warning] Performance counter error: {perfEx.Message}"); } sourceDiskReadCounter?.Dispose(); sourceDiskReadCounter = null; destDiskWriteCounter?.Dispose(); destDiskWriteCounter = null; }
+                                    // --- End Sample ---
                                     lock (consoleLock)
                                     {
-                                        // --- Updated Progress Line (Disk speeds REMOVED) ---
-                                        string progressLine = $"\r{percentage:F1}% ({processedGiB:F2}/{totalGiB:F2} GiB) | Speed: {transferSpeedMbps:F1} MB/s | Elapsed: {elapsedTime:hh\\:mm\\:ss} | File: {Truncate(lastFileName, 50)}";
+                                        // --- Updated Progress Line (Includes Read/Write) ---
+                                        string progressLine = $"\r{percentage:F1}% ({processedGiB:F2}/{totalGiB:F2} GiB) | Speed: {transferSpeedMbps:F1} MB/s | Read: {readMBps:F1} MB/s | Write: {writeMBps:F1} MB/s | Elapsed: {elapsedTime:hh\\:mm\\:ss} | File: {Truncate(lastFileName, 50)}";
                                         try { Console.Write(new string(' ', Console.WindowWidth - 1) + "\r"); Console.Write(progressLine.PadRight(Console.WindowWidth - 1)); } catch { /* Ignore console errors */ }
                                     }
                                 }
