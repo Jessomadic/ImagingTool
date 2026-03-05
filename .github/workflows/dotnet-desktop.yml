@@ -58,6 +58,8 @@ jobs:
           }
 
           Compress-Archive -Path "$buildDir\*" -DestinationPath $zipPath -Force
+          # Include the update script so users can self-update from within the install dir
+          Compress-Archive -Path "Update.ps1" -Update -DestinationPath $zipPath
           Write-Host "✅ Zipped build output from: $buildDir -> $zipPath"
 
       - name: Upload build artifact
