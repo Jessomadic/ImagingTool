@@ -17,7 +17,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $repo        = "Jessomadic/ImagingTool"
-$assetName   = "ImagingTool-Debug.zip"
+$assetName   = "ImagingTool.zip"
 $scriptDir   = $PSScriptRoot
 $versionFile = Join-Path $scriptDir "version.txt"
 
@@ -33,12 +33,18 @@ if (Test-Path $versionFile) {
 Write-Step "Checking latest release..."
 $release = $null
 try {
-    $release = Invoke-RestMethod `
-        -Uri "https://api.github.com/repos/$repo/releases/latest" `
+    $releases = Invoke-RestMethod `
+        -Uri "https://api.github.com/repos/$repo/releases" `
         -Headers @{ "User-Agent" = "ImagingTool-Updater/1.0" }
+    $release = $releases | Select-Object -First 1
 } catch {
     $err = $_.ToString()
     Write-Error "Failed to reach GitHub API: $err"
+    exit 1
+}
+
+if (-not $release) {
+    Write-Error "No releases found for $repo."
     exit 1
 }
 
