@@ -311,19 +311,127 @@ namespace ImagingTool.Services
             var exclusions = new List<string>
             {
                 "[ExclusionList]",
+
+                // --- Virtual memory / hibernation ---
                 @"\pagefile.sys",
                 @"\swapfile.sys",
                 @"\hiberfil.sys",
+
+                // --- System junk ---
                 @"\System Volume Information",
                 @"\RECYCLER",
                 @"\$Recycle.Bin",
-                @"\Windows\Temp\*.*",
+                @"\DumpStack.log",
+                @"\DumpStack.log.tmp",
+
+                // --- Memory / crash dumps ---
+                @"\Windows\Minidump",
+                @"\Windows\memory.dmp",
+                @"\Users\*\AppData\Local\CrashDumps",
+
+                // --- Temp directories ---
                 @"\Windows\Temp",
-                @"\Users\*\AppData\Local\Temp\*.*",
                 @"\Users\*\AppData\Local\Temp",
-                @"\Temp\*.*",
                 @"\Temp",
-                @"\b042787fde8c8f3f_0"
+
+                // --- Windows Update cache (re-downloaded on demand) ---
+                @"\Windows\SoftwareDistribution\Download",
+
+                // --- Windows upgrade staging (can be GBs) ---
+                @"\$Windows.~BT",
+                @"\$Windows.~WS",
+                @"\Windows.old",
+
+                // --- Windows logs ---
+                @"\Windows\Logs",
+                @"\Windows\CbsTemp",
+
+                // --- Windows prefetch (auto-rebuilt) ---
+                @"\Windows\Prefetch",
+
+                // --- Thumbnail / icon caches ---
+                @"\Users\*\AppData\Local\Microsoft\Windows\Explorer",
+
+                // --- Windows web / internet caches ---
+                @"\Users\*\AppData\Local\Microsoft\Windows\INetCache",
+                @"\Users\*\AppData\Local\Microsoft\Windows\WebCache",
+
+                // --- Windows Error Reporting ---
+                @"\ProgramData\Microsoft\Windows\WER",
+                @"\Users\*\AppData\Local\Microsoft\Windows\WER",
+
+                // --- Windows Defender (definitions re-downloaded; scan cache rebuilt) ---
+                @"\ProgramData\Microsoft\Windows Defender\Scans",
+
+                // --- Chrome / Chromium caches ---
+                @"\Users\*\AppData\Local\Google\Chrome\User Data\*\Cache",
+                @"\Users\*\AppData\Local\Google\Chrome\User Data\*\Code Cache",
+                @"\Users\*\AppData\Local\Google\Chrome\User Data\*\GPUCache",
+
+                // --- Edge caches ---
+                @"\Users\*\AppData\Local\Microsoft\Edge\User Data\*\Cache",
+                @"\Users\*\AppData\Local\Microsoft\Edge\User Data\*\Code Cache",
+                @"\Users\*\AppData\Local\Microsoft\Edge\User Data\*\GPUCache",
+
+                // --- Brave caches ---
+                @"\Users\*\AppData\Local\BraveSoftware\Brave-Browser\User Data\*\Cache",
+                @"\Users\*\AppData\Local\BraveSoftware\Brave-Browser\User Data\*\Code Cache",
+                @"\Users\*\AppData\Local\BraveSoftware\Brave-Browser\User Data\*\GPUCache",
+
+                // --- Firefox caches ---
+                @"\Users\*\AppData\Local\Mozilla\Firefox\Profiles\*\cache2",
+                @"\Users\*\AppData\Local\Mozilla\Firefox\Profiles\*\startupCache",
+
+                // --- Teams caches ---
+                @"\Users\*\AppData\Local\Microsoft\Teams\*\Cache",
+                @"\Users\*\AppData\Local\Microsoft\Teams\*\Code Cache",
+                @"\Users\*\AppData\Local\Microsoft\Teams\*\GPUCache",
+                @"\Users\*\AppData\Roaming\Microsoft\Teams\*\Cache",
+                @"\Users\*\AppData\Roaming\Microsoft\Teams\*\blob_storage",
+                @"\Users\*\AppData\Roaming\Microsoft\Teams\*\GPUCache",
+
+                // --- Slack caches ---
+                @"\Users\*\AppData\Roaming\Slack\Cache",
+                @"\Users\*\AppData\Roaming\Slack\Code Cache",
+                @"\Users\*\AppData\Local\slack\*\Cache",
+
+                // --- Discord caches ---
+                @"\Users\*\AppData\Local\Discord\*\Cache",
+                @"\Users\*\AppData\Local\Discord\*\Code Cache",
+                @"\Users\*\AppData\Local\Discord\*\GPUCache",
+
+                // --- Spotify cache ---
+                @"\Users\*\AppData\Local\Spotify\Storage",
+
+                // --- Steam shader / download caches ---
+                @"\Users\*\AppData\Local\Steam\htmlcache",
+                @"\Program Files (x86)\Steam\steamapps\downloading",
+                @"\Program Files (x86)\Steam\steamapps\temp",
+
+                // --- Visual Studio / JetBrains caches ---
+                @"\Users\*\AppData\Local\Microsoft\VisualStudio\*\ComponentModelCache",
+                @"\Users\*\AppData\Local\JetBrains\*\caches",
+
+                // --- npm / yarn / pip package caches ---
+                @"\Users\*\AppData\Roaming\npm-cache",
+                @"\Users\*\AppData\Local\pip\Cache",
+                @"\Users\*\AppData\Local\Yarn\Cache",
+
+                // --- NuGet package cache (restored by dotnet restore) ---
+                @"\Users\*\.nuget\packages",
+
+                // --- Office file cache ---
+                @"\Users\*\AppData\Local\Microsoft\Office\*\OfficeFileCache",
+
+                // --- Windows Store package caches ---
+                @"\Users\*\AppData\Local\Packages\*\LocalCache",
+                @"\Users\*\AppData\Local\Packages\*\TempState",
+
+                // --- Visual C++ / installer package caches ---
+                @"\ProgramData\Package Cache",
+
+                // --- Misc artefact from previous builds ---
+                @"\b042787fde8c8f3f_0",
             };
             await File.WriteAllLinesAsync(configFilePath, exclusions);
         }
