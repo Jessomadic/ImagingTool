@@ -130,6 +130,7 @@ namespace ImagingTool.Services
                 long totalBytesProcessed = 0L;
                 long lastBytesProcessed = 0L;
                 var lastUpdateTime = startTime;
+                double lastKnownSpeedMbps = 0;
                 string lastFileName = "Initializing...";
                 object consoleLock = new object();
 
@@ -193,10 +194,9 @@ namespace ImagingTool.Services
                     var elapsedTime = now - startTime;
                     var timeSinceLastUpdate = (now - lastUpdateTime).TotalSeconds;
 
-                    double transferSpeedMbps = 0;
                     if (timeSinceLastUpdate > 0.2 && totalBytesProcessed > lastBytesProcessed)
                     {
-                        transferSpeedMbps = (totalBytesProcessed - lastBytesProcessed) / (1024.0 * 1024.0) / timeSinceLastUpdate;
+                        lastKnownSpeedMbps = (totalBytesProcessed - lastBytesProcessed) / (1024.0 * 1024.0) / timeSinceLastUpdate;
                         lastBytesProcessed = totalBytesProcessed;
                         lastUpdateTime = now;
                     }
@@ -205,17 +205,42 @@ namespace ImagingTool.Services
                         lastUpdateTime = now;
                     }
 
+                    double remainingGiB = totalGiB - processedGiB;
+
+                    string etaStr = "--:--:--";
+                    if (lastKnownSpeedMbps > 0)
+                    {
+                        var eta = TimeSpan.FromSeconds(remainingGiB * 1024.0 / lastKnownSpeedMbps);
+                        etaStr = eta.ToString(@"h\:mm\:ss");
+                    }
+
+                    string estimatedWimStr = "calculating...";
+                    try
+                    {
+                        long wimBytes = new FileInfo(destination).Length;
+                        if (wimBytes > 0 && processedGiB > 0.01)
+                        {
+                            double wimSizeGiB = wimBytes / (1024.0 * 1024.0 * 1024.0);
+                            double estimatedFinalGiB = (wimSizeGiB / processedGiB) * totalGiB;
+                            estimatedWimStr = $"~{estimatedFinalGiB:F2} GiB";
+                        }
+                    }
+                    catch { }
+
                     float readMBps = _sourceDiskReadCounter?.NextValue() / (1024f * 1024f) ?? 0f;
                     float writeMBps = _destDiskWriteCounter?.NextValue() / (1024f * 1024f) ?? 0f;
 
                     lock (consoleLock)
                     {
                         string progressLine =
-                            $"\r{percentage:F1}% ({processedGiB:F2}/{totalGiB:F2} GiB)" +
-                            $" | Speed: {transferSpeedMbps:F1} MB/s" +
-                            $" | Read: {readMBps:F1} MB/s | Write: {writeMBps:F1} MB/s" +
-                            $" | Elapsed: {elapsedTime:hh\\:mm\\:ss}" +
-                            $" | File: {VolumeHelper.Truncate(lastFileName, 50)}";
+                            $"\r{percentage:F1}% | {processedGiB:F2}/{totalGiB:F2} GiB" +
+                            $" | Left: {remainingGiB:F2} GiB" +
+                            $" | {lastKnownSpeedMbps:F1} MB/s" +
+                            $" | ETA: {etaStr}" +
+                            $" | Est. WIM: {estimatedWimStr}" +
+                            $" | R:{readMBps:F0} W:{writeMBps:F0} MB/s" +
+                            $" | {elapsedTime:h\\:mm\\:ss}" +
+                            $" | {VolumeHelper.Truncate(lastFileName, 35)}";
                         Console.Write(new string(' ', Console.WindowWidth - 1) + "\r");
                         Console.Write(progressLine.PadRight(Console.WindowWidth - 1));
                     }
