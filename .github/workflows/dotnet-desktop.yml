@@ -41,23 +41,42 @@ jobs:
       - name: Run tests
         run: dotnet test $env:Solution_Name --no-build --configuration ${{ matrix.configuration }} --verbosity normal
 
-      - name: Zip main project build output
+      - name: Zip build output
         shell: pwsh
         run: |
           $buildDir = "bin\${{ matrix.configuration }}\net9.0-windows"
-          $zipPath = "output-${{ matrix.configuration }}.zip"
+          $zipPath  = "output-${{ matrix.configuration }}.zip"
 
           if (-not (Test-Path $buildDir)) {
-            Write-Error "❌ Build output directory not found: $buildDir"
+            Write-Error "Build output directory not found: $buildDir"
             exit 1
           }
 
           Compress-Archive -Path "$buildDir\*" -DestinationPath $zipPath -Force
           Compress-Archive -Path "Update.ps1" -Update -DestinationPath $zipPath
-          Write-Host "✅ Zipped build output from: $buildDir -> $zipPath"
+          Write-Host "Zipped: $buildDir -> $zipPath"
 
-      - name: Upload build artifact
+      - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
           name: built-artifact-${{ matrix.configuration }}
           path: output-${{ matrix.configuration }}.zip
+
+      - name: Create GitHub release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        shell: pwsh
+        run: |
+          $tag = "v$(Get-Date -Format 'yyyy-MM-dd-HH-mm-ss')"
+          echo "tag_name=$tag" >> $env:GITHUB_OUTPUT
+        id: tag
+
+      - name: Publish release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag_name }}
+          name: "Intermediate Release ${{ steps.tag.outputs.tag_name }}"
+          prerelease: true
+          files: output-${{ matrix.configuration }}.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
