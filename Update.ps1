@@ -91,11 +91,17 @@ try {
     Write-Ok "Extracted"
 
     # --- Install ---
+    $preserve = @("appsettings.json")
+
     Write-Step "Installing to $scriptDir..."
     Get-ChildItem -Path $extractDir | ForEach-Object {
-        $dest = Join-Path $scriptDir $_.Name
-        Copy-Item -Path $_.FullName -Destination $dest -Recurse -Force
         $name = $_.Name
+        if ($preserve -contains $name) {
+            Write-Host "    Skipped (preserved): $name" -ForegroundColor DarkGray
+            return
+        }
+        $dest = Join-Path $scriptDir $name
+        Copy-Item -Path $_.FullName -Destination $dest -Recurse -Force
         Write-Ok "Updated: $name"
     }
 
