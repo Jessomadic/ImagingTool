@@ -2,6 +2,8 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+<!-- Last updated: 2026-03-05 -->
+
 ## Build & Run Commands
 
 ```bash
