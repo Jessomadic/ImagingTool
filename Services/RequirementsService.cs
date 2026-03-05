@@ -156,14 +156,12 @@ namespace ImagingTool.Services
                 {
                     client.DefaultRequestHeaders.Add("User-Agent", "ImagingTool/1.0");
                     Console.WriteLine("Starting download...");
-                    var response = await client.GetAsync(_settings.WimlibDownloadUrl, HttpCompletionOption.ResponseHeadersRead);
-                    response.EnsureSuccessStatusCode();
-                    await using var stream = await response.Content.ReadAsStreamAsync();
-                    await using var fileStream = File.Create(zipPath);
-                    await stream.CopyToAsync(fileStream);
-                    Console.WriteLine("Download complete.");
+                    var zipBytes = await client.GetByteArrayAsync(_settings.WimlibDownloadUrl);
+                    Console.WriteLine("Download complete. Writing to disk...");
+                    await File.WriteAllBytesAsync(zipPath, zipBytes);
                 }
 
+                // File handle is fully released before extraction begins
                 Console.WriteLine($"Extracting WimLib archive to: {tempDir}");
                 ZipFile.ExtractToDirectory(zipPath, tempDir, true);
 
