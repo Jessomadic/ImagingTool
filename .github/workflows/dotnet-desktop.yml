@@ -32,16 +32,11 @@ jobs:
         with:
           dotnet-version: 9.0.x
 
-      - name: Setup MSBuild
-        uses: microsoft/setup-msbuild@v2
-
       - name: Restore NuGet packages
-        run: dotnet restore $env:Solution_Name --source https://api.nuget.org/v3/index.json
+        run: dotnet restore $env:Solution_Name
 
-      - name: Build the application
-        run: msbuild $env:Solution_Name /p:Configuration=${{ matrix.configuration }}
-        env:
-          Configuration: ${{ matrix.configuration }}
+      - name: Build
+        run: dotnet build $env:Solution_Name --no-restore --configuration ${{ matrix.configuration }}
 
       - name: Run tests
         run: dotnet test $env:Solution_Name --no-build --configuration ${{ matrix.configuration }} --verbosity normal
@@ -58,7 +53,6 @@ jobs:
           }
 
           Compress-Archive -Path "$buildDir\*" -DestinationPath $zipPath -Force
-          # Include the update script so users can self-update from within the install dir
           Compress-Archive -Path "Update.ps1" -Update -DestinationPath $zipPath
           Write-Host "✅ Zipped build output from: $buildDir -> $zipPath"
 
