@@ -12,14 +12,11 @@ permissions:
 
 jobs:
   build:
-    strategy:
-      matrix:
-        configuration: [Debug]
-
     runs-on: windows-2025
 
     env:
       Solution_Name: ImagingTool.sln
+      Configuration: Debug
 
     steps:
       - name: Checkout
@@ -32,51 +29,51 @@ jobs:
         with:
           dotnet-version: 9.0.x
 
-      - name: Restore NuGet packages
+      - name: Restore
         run: dotnet restore $env:Solution_Name
 
       - name: Build
-        run: dotnet build $env:Solution_Name --no-restore --configuration ${{ matrix.configuration }}
+        run: dotnet build $env:Solution_Name --no-restore --configuration $env:Configuration
 
-      - name: Run tests
-        run: dotnet test $env:Solution_Name --no-build --configuration ${{ matrix.configuration }} --verbosity normal
+      - name: Test
+        run: dotnet test $env:Solution_Name --no-build --configuration $env:Configuration --verbosity normal
 
       - name: Zip build output
         shell: pwsh
         run: |
-          $buildDir = "bin\${{ matrix.configuration }}\net9.0-windows"
-          $zipPath  = "output-${{ matrix.configuration }}.zip"
+          $buildDir = "bin\$env:Configuration\net9.0-windows"
+          $zipPath  = "ImagingTool.zip"
 
           if (-not (Test-Path $buildDir)) {
-            Write-Error "Build output directory not found: $buildDir"
+            Write-Error "Build output not found: $buildDir"
             exit 1
           }
 
           Compress-Archive -Path "$buildDir\*" -DestinationPath $zipPath -Force
-          Compress-Archive -Path "Update.ps1" -Update -DestinationPath $zipPath
-          Write-Host "Zipped: $buildDir -> $zipPath"
+          Compress-Archive -Path "Update.ps1"  -Update -DestinationPath $zipPath
+          Write-Host "Created $zipPath"
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: built-artifact-${{ matrix.configuration }}
-          path: output-${{ matrix.configuration }}.zip
+          name: ImagingTool
+          path: ImagingTool.zip
 
-      - name: Create GitHub release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+      - name: Generate release tag
+        id: tag
+        if: ${{ github.event_name == 'push' }}
         shell: pwsh
         run: |
           $tag = "v$(Get-Date -Format 'yyyy-MM-dd-HH-mm-ss')"
           echo "tag_name=$tag" >> $env:GITHUB_OUTPUT
-        id: tag
 
-      - name: Publish release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+      - name: Create release
+        if: ${{ github.event_name == 'push' }}
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.tag_name }}
-          name: "Intermediate Release ${{ steps.tag.outputs.tag_name }}"
+          name: "Build ${{ steps.tag.outputs.tag_name }}"
           prerelease: true
-          files: output-${{ matrix.configuration }}.zip
+          files: ImagingTool.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
