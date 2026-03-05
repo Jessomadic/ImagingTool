@@ -16,6 +16,10 @@
     <!-- <RuntimeIdentifier>win-x64</RuntimeIdentifier> -->
   </PropertyGroup>
 
+  <ItemGroup>
+    <Compile Remove="ImagingTool.Tests\**" />
+  </ItemGroup>
+
   <!-- Keep your existing ItemGroup -->
   <ItemGroup>
     <Using Include="System.Runtime.Versioning" />
