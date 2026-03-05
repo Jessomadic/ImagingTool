@@ -16,14 +16,13 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$repo      = "Jessomadic/ImagingTool"
-$assetName = "ImagingTool-Debug.zip"
-$scriptDir = $PSScriptRoot
+$repo        = "Jessomadic/ImagingTool"
+$assetName   = "ImagingTool-Debug.zip"
+$scriptDir   = $PSScriptRoot
 $versionFile = Join-Path $scriptDir "version.txt"
 
-function Write-Step($msg) { Write-Host "==> $msg" -ForegroundColor Cyan }
-function Write-Ok($msg)   { Write-Host "    $msg" -ForegroundColor Green }
-function Write-Warn($msg) { Write-Host "    WARNING: $msg" -ForegroundColor Yellow }
+function Write-Step([string]$msg) { Write-Host "==> $msg" -ForegroundColor Cyan }
+function Write-Ok([string]$msg)   { Write-Host "    $msg" -ForegroundColor Green }
 
 # --- Check current version ---
 $currentTag = $null
@@ -32,12 +31,14 @@ if (Test-Path $versionFile) {
 }
 
 Write-Step "Checking latest release..."
+$release = $null
 try {
     $release = Invoke-RestMethod `
         -Uri "https://api.github.com/repos/$repo/releases/latest" `
         -Headers @{ "User-Agent" = "ImagingTool-Updater/1.0" }
 } catch {
-    Write-Error "Failed to reach GitHub API: $_"
+    $err = $_.ToString()
+    Write-Error "Failed to reach GitHub API: $err"
     exit 1
 }
 
@@ -45,7 +46,7 @@ $latestTag = $release.tag_name
 $asset = $release.assets | Where-Object { $_.name -eq $assetName } | Select-Object -First 1
 
 if (-not $asset) {
-    Write-Error "Release '$latestTag' has no asset named '$assetName'. The release may still be processing — try again in a minute."
+    Write-Error "Release '$latestTag' has no asset named '$assetName'. The release may still be processing - try again in a minute."
     exit 1
 }
 
@@ -53,7 +54,8 @@ Write-Ok "Latest : $latestTag"
 Write-Ok "Current: $(if ($currentTag) { $currentTag } else { '(unknown)' })"
 
 if (-not $Force -and $currentTag -eq $latestTag) {
-    Write-Host "`nAlready up to date." -ForegroundColor Green
+    Write-Host ""
+    Write-Host "Already up to date." -ForegroundColor Green
     exit 0
 }
 
@@ -65,8 +67,8 @@ if ($running) {
 }
 
 # --- Download ---
-$tempDir  = Join-Path $env:TEMP "ImagingTool-update-$(New-Guid)"
-$zipPath  = Join-Path $tempDir "update.zip"
+$tempDir    = Join-Path $env:TEMP "ImagingTool-update-$(New-Guid)"
+$zipPath    = Join-Path $tempDir "update.zip"
 $extractDir = Join-Path $tempDir "extracted"
 
 try {
@@ -74,29 +76,33 @@ try {
 
     Write-Step "Downloading $latestTag..."
     Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zipPath -UseBasicParsing
-    Write-Ok "Downloaded $('{0:N1} MB' -f ((Get-Item $zipPath).Length / 1MB))"
+    $sizeMB = '{0:N1} MB' -f ((Get-Item $zipPath).Length / 1MB)
+    Write-Ok "Downloaded $sizeMB"
 
     # --- Extract ---
     Write-Step "Extracting..."
     Expand-Archive -Path $zipPath -DestinationPath $extractDir -Force
-    Write-Ok "Extracted to $extractDir"
+    Write-Ok "Extracted"
 
     # --- Install ---
     Write-Step "Installing to $scriptDir..."
     Get-ChildItem -Path $extractDir | ForEach-Object {
         $dest = Join-Path $scriptDir $_.Name
         Copy-Item -Path $_.FullName -Destination $dest -Recurse -Force
-        Write-Ok "Updated: $($_.Name)"
+        $name = $_.Name
+        Write-Ok "Updated: $name"
     }
 
     # --- Record version ---
     Set-Content -Path $versionFile -Value $latestTag -Encoding UTF8
     Write-Ok "Version saved: $latestTag"
 
-    Write-Host "`nUpdate complete! ImagingTool is now at $latestTag." -ForegroundColor Green
+    Write-Host ""
+    Write-Host "Update complete! ImagingTool is now at $latestTag." -ForegroundColor Green
 
 } catch {
-    Write-Error "Update failed: $_"
+    $err = $_.ToString()
+    Write-Error "Update failed: $err"
     exit 1
 } finally {
     Remove-Item -Path $tempDir -Recurse -Force -ErrorAction SilentlyContinue
