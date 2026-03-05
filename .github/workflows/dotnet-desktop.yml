@@ -5,10 +5,10 @@ on:
     branches: [ "master" ]
   pull_request:
     branches: [ "master" ]
-permissions:
-  contents: write  # This is needed to read the contents of the repository
-  actions: write  # This allows creating the repository_dispatch event
 
+permissions:
+  contents: write
+  actions: write
 
 jobs:
   build:
@@ -30,47 +30,38 @@ jobs:
       - name: Install .NET
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: 9.0.202
+          dotnet-version: 9.0.x
 
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
       - name: Restore NuGet packages
-        run: dotnet restore $env:Solution_Name
+        run: dotnet restore $env:Solution_Name --source https://api.nuget.org/v3/index.json
 
       - name: Build the application
         run: msbuild $env:Solution_Name /p:Configuration=${{ matrix.configuration }}
         env:
           Configuration: ${{ matrix.configuration }}
 
-      - name: Find and zip build output
+      - name: Run tests
+        run: dotnet test $env:Solution_Name --no-build --configuration ${{ matrix.configuration }} --verbosity normal
+
+      - name: Zip main project build output
         shell: pwsh
         run: |
-          $outputDirs = Get-ChildItem -Recurse -Directory -Filter net9.0-windows
-          if (-not $outputDirs) {
-            Write-Error "❌ No net9.0 output directory found!"
-          }
-
-          $buildDir = $outputDirs[0].FullName
+          $buildDir = "bin\${{ matrix.configuration }}\net9.0-windows"
           $zipPath = "output-${{ matrix.configuration }}.zip"
 
-          Compress-Archive -Path "$buildDir\*" -DestinationPath $zipPath -Force
-          if (-not (Test-Path $zipPath)) {
-            Write-Error "❌ ZIP file not created!"
-          } else {
-            Write-Host "✅ Zipped build output from: $buildDir -> $zipPath"
+          if (-not (Test-Path $buildDir)) {
+            Write-Error "❌ Build output directory not found: $buildDir"
+            exit 1
           }
+
+          Compress-Archive -Path "$buildDir\*" -DestinationPath $zipPath -Force
+          Write-Host "✅ Zipped build output from: $buildDir -> $zipPath"
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: built-artifact-${{ matrix.configuration }}
           path: output-${{ matrix.configuration }}.zip
-
-     # - name: Trigger second workflow (Upload Release Asset)
-      #  run: |
-      #    curl -X POST "https://api.github.com/repos/Jessomadic/ImagingTool/dispatches" `
-      #    -H "Authorization: Bearer ${{ secrets.PAT_TOKEN }}" `
-       #   -H "Content-Type: application/json" `
-       #   -d '{"event_type": "trigger-upload-artifact-workflow"}'
-

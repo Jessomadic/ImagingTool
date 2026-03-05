@@ -2,64 +2,48 @@ name: Upload Release Asset
 
 on:
   workflow_run:
-    workflows: ["dotnet-desktop.yml"]
-    types: [completed, requested]
-  workflow_dispatch:  # Add this to allow manual triggering
-      
+    workflows: [".NET Core Desktop"]
+    types: [completed]
+  workflow_dispatch:
+
 permissions:
-  contents: write  # This is needed to read the contents of the repository
-  actions: write  # This allows creating the repository_dispatch event
-  
+  contents: write
+  actions: read
+
 jobs:
   publish:
     name: Publish Release
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
-    
-    runs-on: windows-2025  # Ensure you're using the right runner for your setup
+
+    runs-on: windows-2025
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_branch }}  # This ensures we're working with the branch from the first workflow
+          ref: ${{ github.event.workflow_run.head_branch || github.ref }}
 
-      - name: Download artifact from previous workflow
+      - name: Download artifact from build workflow
         uses: dawidd6/action-download-artifact@v6
         with:
-          workflow: dotnet-desktop.yml  # This must match the first workflow name exactly
-          name: built-artifact-Debug  # This must match the artifact name from the first workflow exactly
+          workflow: dotnet-desktop.yml
+          name: built-artifact-Debug
           run_id: ${{ github.event.workflow_run.id }}
           path: ./artifact
 
-      - name: Tag the commit with current date and time (12-hour format)
-        id: tag_commit
-        run: |
-          git config user.name "github-actions"
-          git config user.email "github-actions@users.noreply.github.com"
-          $current_date = Get-Date -Format "yyyy-MM-dd-hh-mm-ss-tt"  # 12-hour format
-          $tag_name = "v$current_date"
-          git tag $tag_name
-          git push origin $tag_name
-          echo "tag_name=$tag_name" >> $env:GITHUB_OUTPUT
+      - name: Generate release tag
+        id: tag
         shell: pwsh
+        run: |
+          $tag = "v$(Get-Date -Format 'yyyy-MM-dd-HH-mm-ss')"
+          echo "tag_name=$tag" >> $env:GITHUB_OUTPUT
 
-      - name: Create Release
-        id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create release and upload asset
+        uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.tag_commit.outputs.tag_name }}  # Use the dynamic tag from the previous step
-          release_name: "Intermediate Release ${{ steps.tag_commit.outputs.tag_name }}"
-          draft: false
+          tag_name: ${{ steps.tag.outputs.tag_name }}
+          name: "Intermediate Release ${{ steps.tag.outputs.tag_name }}"
           prerelease: true
-
-      - name: Upload Release Asset
-        uses: actions/upload-release-asset@v1
+          files: ./artifact/output-Debug.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./artifact/output-Debug.zip  # Match the actual artifact name
-          asset_name: ImagingTool-Debug.zip  # Give it a clearer name
-          asset_content_type: application/zip
