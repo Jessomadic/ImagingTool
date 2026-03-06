@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Text;
 using System.Text.RegularExpressions;
 using ImagingTool.Helpers;
 
@@ -136,19 +137,17 @@ namespace ImagingTool.Services
 
                 using var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
                 var outputTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-                var errorTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
                 process.OutputDataReceived += (_, e) =>
                 {
                     if (e.Data == null) { outputTcs.TrySetResult(true); return; }
                 };
 
-                process.ErrorDataReceived += (_, e) =>
+                // Process one line of wimlib stderr output.
+                // wimlib uses bare \r (no \n) to overwrite progress in-place, so we read
+                // the raw character stream and split on both \r and \n ourselves.
+                void handleLine(string line)
                 {
-                    if (e.Data == null) { errorTcs.TrySetResult(true); return; }
-
-                    string line = e.Data;
-
                     if (IsWimlibError(line))
                     {
                         if (line.Contains("Parent inode") && line.Contains("was missing from the MFT listing"))
@@ -244,16 +243,45 @@ namespace ImagingTool.Services
                         Console.Write(new string(' ', Console.WindowWidth - 1) + "\r");
                         Console.Write(progressLine.PadRight(Console.WindowWidth - 1));
                     }
-                };
+                }
 
                 if (!process.Start())
                     throw new InvalidOperationException($"Failed to start WimLib process: {_settings.WimlibPath}");
 
                 process.BeginOutputReadLine();
-                process.BeginErrorReadLine();
+
+                // Read stderr as a raw character stream so \r-only progress lines are
+                // delivered immediately instead of buffering until the next \n.
+                var stderrTask = Task.Run(async () =>
+                {
+                    var sb = new StringBuilder();
+                    var buf = new char[4096];
+                    int n;
+                    while ((n = await process.StandardError.ReadAsync(buf, 0, buf.Length)) > 0)
+                    {
+                        for (int i = 0; i < n; i++)
+                        {
+                            char c = buf[i];
+                            if (c == '\r' || c == '\n')
+                            {
+                                if (sb.Length > 0)
+                                {
+                                    handleLine(sb.ToString());
+                                    sb.Clear();
+                                }
+                            }
+                            else
+                            {
+                                sb.Append(c);
+                            }
+                        }
+                    }
+                    if (sb.Length > 0)
+                        handleLine(sb.ToString());
+                });
 
                 await process.WaitForExitAsync();
-                await Task.WhenAll(outputTcs.Task, errorTcs.Task);
+                await Task.WhenAll(outputTcs.Task, stderrTask);
 
                 lock (consoleLock)
                 {
