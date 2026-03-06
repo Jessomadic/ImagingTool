@@ -78,7 +78,8 @@ namespace ImagingTool
             Console.WriteLine("  1. Backup System Drive");
             Console.WriteLine("  2. Restore System Image");
             Console.WriteLine("  3. Verify WIM Image");
-            Console.Write("Enter choice (1, 2, or 3): ");
+            Console.WriteLine("  4. Extract to Existing Install");
+            Console.Write("Enter choice (1, 2, 3, or 4): ");
             string? choice = Console.ReadLine();
 
             string? destinationArg = args
@@ -93,16 +94,24 @@ namespace ImagingTool
             string? verifyArg = args
                 .FirstOrDefault(a => a.StartsWith("-verify=", StringComparison.OrdinalIgnoreCase))
                 ?.Substring("-verify=".Length).Trim('"');
+            string? extractSrcArg = args
+                .FirstOrDefault(a => a.StartsWith("-extractsrc=", StringComparison.OrdinalIgnoreCase))
+                ?.Substring("-extractsrc=".Length).Trim('"');
+            string? extractDstArg = args
+                .FirstOrDefault(a => a.StartsWith("-extractdst=", StringComparison.OrdinalIgnoreCase))
+                ?.Substring("-extractdst=".Length).Trim('"');
 
             bool isBackup = choice == "1" || (!string.IsNullOrWhiteSpace(destinationArg) && string.IsNullOrWhiteSpace(sourceArg));
             bool isRestore = choice == "2" || (!string.IsNullOrWhiteSpace(sourceArg) && !string.IsNullOrWhiteSpace(targetArg));
             bool isVerify = choice == "3" || !string.IsNullOrWhiteSpace(verifyArg);
+            bool isExtract = choice == "4" || !string.IsNullOrWhiteSpace(extractSrcArg);
 
             var processRunner = new ProcessRunner();
             var requirements = new RequirementsService(settings);
             var backupService = new BackupService(settings);
             var restoreService = new RestoreService(settings, processRunner);
             var verifyService = new VerifyService(settings, processRunner);
+            var extractService = new ExtractService(settings, processRunner);
 
             try
             {
@@ -187,6 +196,43 @@ namespace ImagingTool
                     if (string.IsNullOrWhiteSpace(verifyArg))
                         MessageBox.Show("WIM verification passed. Image integrity confirmed.", "Verify Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 }
+                else if (isExtract)
+                {
+                    string? extractSrc = extractSrcArg;
+                    if (string.IsNullOrWhiteSpace(extractSrc))
+                    {
+                        Console.WriteLine("Select the WIM file to extract from...");
+                        extractSrc = await DialogHelper.ShowOpenDialogOnStaThreadAsync();
+                    }
+
+                    if (string.IsNullOrWhiteSpace(extractSrc))
+                        throw new OperationCanceledException("No WIM file selected.");
+
+                    if (!File.Exists(extractSrc))
+                        throw new FileNotFoundException($"WIM file not found: {extractSrc}");
+
+                    string? extractDst = extractDstArg;
+                    if (string.IsNullOrWhiteSpace(extractDst))
+                    {
+                        Console.Write("Enter target root drive (e.g. C:\\): ");
+                        extractDst = Console.ReadLine()?.Trim().Trim('"');
+                    }
+
+                    if (string.IsNullOrWhiteSpace(extractDst) || !Directory.Exists(extractDst))
+                        throw new ArgumentException($"Target drive not found or not specified: {extractDst}");
+
+                    await extractService.PerformExtraction(extractSrc, extractDst);
+
+                    Console.ForegroundColor = ConsoleColor.Green;
+                    Console.WriteLine("\nExtract operation completed.");
+                    Console.ResetColor();
+
+                    if (string.IsNullOrWhiteSpace(extractSrcArg))
+                        MessageBox.Show(
+                            "Extraction complete!\n\nPrograms, user data, and app registry have been merged.\n" +
+                            "Log out and back in for per-user settings (HKCU) to take effect.",
+                            "Extract Complete", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
                 else
                 {
                     Console.WriteLine("Invalid choice.");
@@ -214,7 +260,8 @@ namespace ImagingTool
             {
                 bool nonInteractive = !string.IsNullOrWhiteSpace(destinationArg) ||
                                       !string.IsNullOrWhiteSpace(sourceArg) ||
-                                      !string.IsNullOrWhiteSpace(verifyArg);
+                                      !string.IsNullOrWhiteSpace(verifyArg) ||
+                                      !string.IsNullOrWhiteSpace(extractSrcArg);
                 if (!nonInteractive || Console.CursorTop <= 5)
                 {
                     Console.WriteLine("\nPress any key to exit...");
