@@ -114,7 +114,7 @@ namespace ImagingTool.Services
                 var arguments =
                     $"capture \"{systemDrive.TrimEnd('\\')}\" \"{destination}\" " +
                     $"\"Windows System Backup\" \"Backup taken on {DateTime.Now:yyyy-MM-dd HH:mm:ss}\" " +
-                    $"--snapshot --config=\"{configFilePath}\" --compress={compressionArg}{solidFlags} --threads={threads}";
+                    $"--snapshot --check --config=\"{configFilePath}\" --compress={compressionArg}{solidFlags} --threads={threads}";
 
                 Console.WriteLine($"\nExecuting WimLib command:");
                 Console.WriteLine($"{_settings.WimlibPath} {arguments}\n");
