@@ -8,18 +8,18 @@ public class BackupServiceTests
     // --- Compression Level ---
 
     [Theory]
-    [InlineData("none", "none")]
-    [InlineData("None", "none")]
-    [InlineData("NONE", "none")]
-    [InlineData("maximum", "lzx")]
-    [InlineData("Maximum", "lzx")]
-    [InlineData("MAXIMUM", "lzx")]
-    [InlineData("fast", "fast")]
-    [InlineData("Fast", "fast")]
-    [InlineData("FAST", "fast")]
+    [InlineData("none",    "none")]
+    [InlineData("None",    "none")]
+    [InlineData("NONE",    "none")]
+    [InlineData("maximum", "lzms")]
+    [InlineData("Maximum", "lzms")]
+    [InlineData("MAXIMUM", "lzms")]
+    [InlineData("fast",    "fast")]
+    [InlineData("Fast",    "fast")]
+    [InlineData("FAST",    "fast")]
     [InlineData("unknown", "fast")]
-    [InlineData("", "fast")]
-    [InlineData(null, "fast")]
+    [InlineData("",        "fast")]
+    [InlineData(null,      "fast")]
     public void ResolveCompressionLevel_ReturnsExpectedArg(string? input, string expectedArg)
     {
         var (arg, _) = BackupService.ResolveCompressionLevel(input);
@@ -27,11 +27,11 @@ public class BackupServiceTests
     }
 
     [Theory]
-    [InlineData("none", "None (Fastest, Largest File)")]
-    [InlineData("maximum", "Maximum (Slowest, Smallest File)")]
-    [InlineData("fast", "Fast (Balanced)")]
-    [InlineData("unknown", "Fast (Balanced)")]
-    [InlineData(null, "Fast (Balanced)")]
+    [InlineData("none",    "None (No compression — fastest write, largest file)")]
+    [InlineData("maximum", "Maximum — LZMS Solid (best compression, recommended for network)")]
+    [InlineData("fast",    "Fast — XPRESS Solid (balanced)")]
+    [InlineData("unknown", "Fast — XPRESS Solid (balanced)")]
+    [InlineData(null,      "Fast — XPRESS Solid (balanced)")]
     public void ResolveCompressionLevel_ReturnsExpectedDisplay(string? input, string expectedDisplay)
     {
         var (_, display) = BackupService.ResolveCompressionLevel(input);

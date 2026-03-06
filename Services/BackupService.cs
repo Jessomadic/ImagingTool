@@ -98,6 +98,13 @@ namespace ImagingTool.Services
             (string compressionArg, string compressionLevelDisplay) = ResolveCompressionLevel(_settings.WimCompressionLevel);
             Console.WriteLine($"Using Compression Level: {compressionLevelDisplay}");
 
+            // Solid mode bundles many small files into large blocks before compressing.
+            // On a network destination this dramatically reduces write volume and is almost
+            // always faster overall, even accounting for the extra CPU work.
+            bool useSolid = !compressionArg.Equals("none", StringComparison.OrdinalIgnoreCase);
+            string solidFlags = useSolid ? " --solid --solid-chunk-size=64M" : "";
+            if (useSolid) Console.WriteLine("Solid mode: ON (64 MiB blocks)");
+
             var configFilePath = Path.Combine(Path.GetTempPath(), $"wimlib-config-{Guid.NewGuid()}.txt");
             Console.WriteLine($"Using temporary config file for exclusions: {configFilePath}");
 
@@ -110,7 +117,7 @@ namespace ImagingTool.Services
                 var arguments =
                     $"capture \"{systemDrive.TrimEnd('\\')}\" \"{destination}\" " +
                     $"\"Windows System Backup\" \"Backup taken on {DateTime.Now:yyyy-MM-dd HH:mm:ss}\" " +
-                    $"--snapshot --config=\"{configFilePath}\" --compress={compressionArg} --threads={threads}";
+                    $"--snapshot --config=\"{configFilePath}\" --compress={compressionArg}{solidFlags} --threads={threads}";
 
                 Console.WriteLine($"\nExecuting WimLib command:");
                 Console.WriteLine($"{_settings.WimlibPath} {arguments}\n");
@@ -338,9 +345,9 @@ namespace ImagingTool.Services
         {
             return compressionLevel?.ToLowerInvariant() switch
             {
-                "none" => ("none", "None (Fastest, Largest File)"),
-                "maximum" => ("lzx", "Maximum (Slowest, Smallest File)"),
-                _ => ("fast", "Fast (Balanced)")
+                "none"    => ("none", "None (No compression — fastest write, largest file)"),
+                "maximum" => ("lzms", "Maximum — LZMS Solid (best compression, recommended for network)"),
+                _         => ("fast", "Fast — XPRESS Solid (balanced)"),
             };
         }
 
