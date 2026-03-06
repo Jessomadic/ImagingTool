@@ -16,43 +16,51 @@ public class RestoreServiceTests
         DotNetRuntimeInstallerUrl = "https://example.com/dotnet-installer.exe"
     };
 
+    // Helper: sets up the mock so wimlib (RunProcessWithProgressAsync) returns the given result
+    private static void SetupWimlib(Mock<IProcessRunner> mock, bool returns) =>
+        mock.Setup(r => r.RunProcessWithProgressAsync(
+                It.IsAny<string>(),
+                It.Is<string>(a => a.Contains("apply")),
+                It.IsAny<string>(),
+                It.IsAny<Action<string>>()))
+            .ReturnsAsync(returns);
+
+    // Helper: sets up the mock so bcdboot (RunProcessAsync) returns the given result
+    private static void SetupBcdboot(Mock<IProcessRunner> mock, bool returns) =>
+        mock.Setup(r => r.RunProcessAsync("bcdboot.exe", It.IsAny<string>(), It.IsAny<string>()))
+            .ReturnsAsync(returns);
+
     [Fact]
     public async Task ApplyWimImageAndConfigureBoot_WimlibSucceeds_RunsBcdboot()
     {
         var mockRunner = new Mock<IProcessRunner>();
-        mockRunner
-            .Setup(r => r.RunProcessAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()))
-            .ReturnsAsync(true);
+        SetupWimlib(mockRunner, true);
+        SetupBcdboot(mockRunner, true);
 
         var service = new RestoreService(CreateSettings(), mockRunner.Object);
-
         await service.ApplyWimImageAndConfigureBoot(@"D:\backup.wim", "E:");
 
-        mockRunner.Verify(r => r.RunProcessAsync(
+        mockRunner.Verify(r => r.RunProcessWithProgressAsync(
             It.IsAny<string>(),
             It.Is<string>(a => a.Contains("apply")),
-            "WimLib Apply"), Times.Once);
+            "WimLib Apply",
+            It.IsAny<Action<string>>()), Times.Once);
 
         mockRunner.Verify(r => r.RunProcessAsync(
-            "bcdboot.exe",
-            It.IsAny<string>(),
-            "BCDBoot"), Times.Once);
+            "bcdboot.exe", It.IsAny<string>(), "BCDBoot"), Times.Once);
     }
 
     [Fact]
     public async Task ApplyWimImageAndConfigureBoot_WimlibFails_ThrowsAndSkipsBcdboot()
     {
         var mockRunner = new Mock<IProcessRunner>();
-        mockRunner
-            .Setup(r => r.RunProcessAsync(It.IsAny<string>(), It.Is<string>(a => a.Contains("apply")), It.IsAny<string>()))
-            .ReturnsAsync(false);
+        SetupWimlib(mockRunner, false);
 
         var service = new RestoreService(CreateSettings(), mockRunner.Object);
 
         await Assert.ThrowsAsync<Exception>(() =>
             service.ApplyWimImageAndConfigureBoot(@"D:\backup.wim", "E:"));
 
-        // bcdboot must not be called if wimlib fails
         mockRunner.Verify(r => r.RunProcessAsync(
             "bcdboot.exe", It.IsAny<string>(), It.IsAny<string>()), Times.Never);
     }
@@ -61,12 +69,8 @@ public class RestoreServiceTests
     public async Task ApplyWimImageAndConfigureBoot_BcdbootFails_DoesNotThrow()
     {
         var mockRunner = new Mock<IProcessRunner>();
-        mockRunner
-            .Setup(r => r.RunProcessAsync(It.IsAny<string>(), It.Is<string>(a => a.Contains("apply")), It.IsAny<string>()))
-            .ReturnsAsync(true);
-        mockRunner
-            .Setup(r => r.RunProcessAsync("bcdboot.exe", It.IsAny<string>(), It.IsAny<string>()))
-            .ReturnsAsync(false);
+        SetupWimlib(mockRunner, true);
+        SetupBcdboot(mockRunner, false);
 
         var service = new RestoreService(CreateSettings(), mockRunner.Object);
 
@@ -81,48 +85,44 @@ public class RestoreServiceTests
     public async Task ApplyWimImageAndConfigureBoot_PassesCorrectSourceWimToWimlib()
     {
         var mockRunner = new Mock<IProcessRunner>();
-        mockRunner
-            .Setup(r => r.RunProcessAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()))
-            .ReturnsAsync(true);
+        SetupWimlib(mockRunner, true);
+        SetupBcdboot(mockRunner, true);
 
         var service = new RestoreService(CreateSettings(), mockRunner.Object);
-
         await service.ApplyWimImageAndConfigureBoot(@"D:\backup.wim", "E:");
 
-        mockRunner.Verify(r => r.RunProcessAsync(
+        mockRunner.Verify(r => r.RunProcessWithProgressAsync(
             It.IsAny<string>(),
             It.Is<string>(a => a.Contains(@"D:\backup.wim")),
-            "WimLib Apply"), Times.Once);
+            "WimLib Apply",
+            It.IsAny<Action<string>>()), Times.Once);
     }
 
     [Fact]
     public async Task ApplyWimImageAndConfigureBoot_PassesTargetDirectoryToWimlib()
     {
         var mockRunner = new Mock<IProcessRunner>();
-        mockRunner
-            .Setup(r => r.RunProcessAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()))
-            .ReturnsAsync(true);
+        SetupWimlib(mockRunner, true);
+        SetupBcdboot(mockRunner, true);
 
         var service = new RestoreService(CreateSettings(), mockRunner.Object);
-
         await service.ApplyWimImageAndConfigureBoot(@"D:\backup.wim", "E:");
 
-        mockRunner.Verify(r => r.RunProcessAsync(
+        mockRunner.Verify(r => r.RunProcessWithProgressAsync(
             It.IsAny<string>(),
             It.Is<string>(a => a.Contains(@"E:\")),
-            "WimLib Apply"), Times.Once);
+            "WimLib Apply",
+            It.IsAny<Action<string>>()), Times.Once);
     }
 
     [Fact]
     public async Task ApplyWimImageAndConfigureBoot_PassesWindowsFolderToBcdboot()
     {
         var mockRunner = new Mock<IProcessRunner>();
-        mockRunner
-            .Setup(r => r.RunProcessAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()))
-            .ReturnsAsync(true);
+        SetupWimlib(mockRunner, true);
+        SetupBcdboot(mockRunner, true);
 
         var service = new RestoreService(CreateSettings(), mockRunner.Object);
-
         await service.ApplyWimImageAndConfigureBoot(@"D:\backup.wim", "E:");
 
         mockRunner.Verify(r => r.RunProcessAsync(

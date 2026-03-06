@@ -80,6 +80,16 @@ namespace ImagingTool.Helpers
             return false;
         }
 
+        /// <summary>
+        /// Returns Console.WindowWidth - 1, falling back to 120 when there is no real console
+        /// (e.g. in a test runner or when stdout is redirected).
+        /// </summary>
+        public static int SafeConsoleWidth()
+        {
+            try { return Math.Max(Console.WindowWidth - 1, 1); }
+            catch { return 120; }
+        }
+
         public static string Truncate(string value, int maxLength)
         {
             if (string.IsNullOrEmpty(value)) return string.Empty;

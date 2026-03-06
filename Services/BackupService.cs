@@ -136,12 +136,6 @@ namespace ImagingTool.Services
                 object consoleLock = new object();
 
                 using var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
-                var outputTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-
-                process.OutputDataReceived += (_, e) =>
-                {
-                    if (e.Data == null) { outputTcs.TrySetResult(true); return; }
-                };
 
                 // Process one line of wimlib stderr output.
                 // wimlib uses bare \r (no \n) to overwrite progress in-place, so we read
@@ -253,24 +247,24 @@ namespace ImagingTool.Services
                             $" | R:{readMBps:F0} W:{writeMBps:F0} MB/s" +
                             $" | {elapsedTime:h\\:mm\\:ss}" +
                             $" | {VolumeHelper.Truncate(lastFileName, 35)}";
-                        Console.Write(new string(' ', Console.WindowWidth - 1) + "\r");
-                        Console.Write(progressLine.PadRight(Console.WindowWidth - 1));
+                        Console.Write(new string(' ', VolumeHelper.SafeConsoleWidth()) + "\r");
+                        Console.Write(progressLine.PadRight(VolumeHelper.SafeConsoleWidth()));
                     }
                 }
 
                 if (!process.Start())
                     throw new InvalidOperationException($"Failed to start WimLib process: {_settings.WimlibPath}");
 
-                process.BeginOutputReadLine();
-
-                // Read stderr as a raw character stream so \r-only progress lines are
-                // delivered immediately instead of buffering until the next \n.
-                var stderrTask = Task.Run(async () =>
+                // wimlib writes progress (GiB done, file names) to stdout and errors/warnings
+                // to stderr. Both use bare \r to overwrite lines in place, so we read each
+                // stream as raw characters — splitting on \r and \n — and route everything
+                // through handleLine. This avoids the \n-only buffering of BeginOutputReadLine.
+                Task ReadRaw(StreamReader reader) => Task.Run(async () =>
                 {
                     var sb = new StringBuilder();
                     var buf = new char[4096];
                     int n;
-                    while ((n = await process.StandardError.ReadAsync(buf, 0, buf.Length)) > 0)
+                    while ((n = await reader.ReadAsync(buf, 0, buf.Length)) > 0)
                     {
                         for (int i = 0; i < n; i++)
                         {
@@ -293,12 +287,15 @@ namespace ImagingTool.Services
                         handleLine(sb.ToString());
                 });
 
+                var stdoutTask = ReadRaw(process.StandardOutput);
+                var stderrTask = ReadRaw(process.StandardError);
+
                 await process.WaitForExitAsync();
-                await Task.WhenAll(outputTcs.Task, stderrTask);
+                await Task.WhenAll(stdoutTask, stderrTask);
 
                 lock (consoleLock)
                 {
-                    Console.Write(new string(' ', Console.WindowWidth - 1) + "\r");
+                    Console.Write(new string(' ', VolumeHelper.SafeConsoleWidth()) + "\r");
                 }
 
                 Console.WriteLine("\nWimLib process finished.");

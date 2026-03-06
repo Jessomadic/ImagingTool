@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Text.RegularExpressions;
 using System.Windows.Forms;
 using ImagingTool.Helpers;
 
@@ -109,19 +111,56 @@ namespace ImagingTool.Services
             string targetDirectory = targetDrive + "\\";
             var wimApplyArgs = $"apply \"{sourceWim}\" 1 \"{targetDirectory}\" --check";
 
-            bool wimlibSuccess = await _processRunner.RunProcessAsync(_settings.WimlibPath, wimApplyArgs, "WimLib Apply");
+            object consoleLock = new object();
+
+            void onLine(string line)
+            {
+                if (line.StartsWith("[WARNING]", StringComparison.OrdinalIgnoreCase))
+                {
+                    lock (consoleLock)
+                    {
+                        Console.ForegroundColor = ConsoleColor.Yellow;
+                        Console.WriteLine($"\n[WimLib Warning] {line}");
+                        Console.ResetColor();
+                    }
+                    return;
+                }
+
+                var match = Regex.Match(line,
+                    @"(\d+(?:[.,]\d+)?)\s*GiB\s*/\s*(\d+(?:[.,]\d+)?)\s*GiB\s*\((\d+)\s*%\s*done\)",
+                    RegexOptions.IgnoreCase);
+
+                if (!match.Success) return;
+                if (!double.TryParse(match.Groups[1].Value.Replace(',', '.'), NumberStyles.Any, CultureInfo.InvariantCulture, out double processedGiB)) return;
+                if (!double.TryParse(match.Groups[2].Value.Replace(',', '.'), NumberStyles.Any, CultureInfo.InvariantCulture, out double totalGiB)) return;
+                if (!double.TryParse(match.Groups[3].Value, NumberStyles.Any, CultureInfo.InvariantCulture, out double percentage)) return;
+
+                double remainingGiB = totalGiB - processedGiB;
+                lock (consoleLock)
+                {
+                    string progressLine =
+                        $"\r{percentage:F1}% | {processedGiB:F2}/{totalGiB:F2} GiB | Left: {remainingGiB:F2} GiB";
+                    Console.Write(new string(' ', VolumeHelper.SafeConsoleWidth()) + "\r");
+                    Console.Write(progressLine.PadRight(VolumeHelper.SafeConsoleWidth()));
+                }
+            }
+
+            bool wimlibSuccess = await _processRunner.RunProcessWithProgressAsync(
+                _settings.WimlibPath, wimApplyArgs, "WimLib Apply", onLine);
+
+            Console.Write(new string(' ', VolumeHelper.SafeConsoleWidth()) + "\r");
+
             if (!wimlibSuccess)
                 throw new Exception("WimLib apply process failed. Cannot proceed with boot configuration.");
 
             Console.WriteLine("WIM image applied successfully.");
             Console.WriteLine("\nConfiguring boot files on target drive...");
             Console.ForegroundColor = ConsoleColor.Yellow;
-            Console.WriteLine("Note: This attempts automatic configuration assuming a standard UEFI setup.");
-            Console.WriteLine("Manual configuration using diskpart/bcdboot in WinPE might be needed for complex layouts or BIOS systems.");
+            Console.WriteLine("Note: Configuring boot for both UEFI and BIOS firmware (/f ALL).");
             Console.ResetColor();
 
             string windowsFolderPath = Path.Combine(targetDirectory, "Windows");
-            var bcdbootArgs = $"\"{windowsFolderPath}\" /f UEFI";
+            var bcdbootArgs = $"\"{windowsFolderPath}\" /f ALL";
             bool bcdbootSuccess = await _processRunner.RunProcessAsync("bcdboot.exe", bcdbootArgs, "BCDBoot");
 
             if (!bcdbootSuccess)

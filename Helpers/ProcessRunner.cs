@@ -7,6 +7,16 @@ namespace ImagingTool.Helpers
     {
         public async Task<bool> RunProcessAsync(string fileName, string arguments, string processName)
         {
+            object consoleLock = new object();
+            return await RunProcessWithProgressAsync(fileName, arguments, processName, line =>
+            {
+                lock (consoleLock) { Console.WriteLine(line); }
+            });
+        }
+
+        public async Task<bool> RunProcessWithProgressAsync(
+            string fileName, string arguments, string processName, Action<string> onLine)
+        {
             Console.WriteLine($"\nExecuting {processName} command:");
             Console.WriteLine($"{fileName} {arguments}\n");
 
@@ -22,33 +32,48 @@ namespace ImagingTool.Helpers
                 StandardErrorEncoding = Encoding.UTF8
             };
 
-            object consoleLock = new object();
-            using var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
-            var outputTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-            var errorTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-
-            process.OutputDataReceived += (_, e) =>
-            {
-                if (e.Data == null) { outputTcs.TrySetResult(true); return; }
-                lock (consoleLock) { Console.WriteLine($"[{processName} STDOUT] {e.Data}"); }
-            };
-
-            process.ErrorDataReceived += (_, e) =>
-            {
-                if (e.Data == null) { errorTcs.TrySetResult(true); return; }
-                lock (consoleLock) { Console.WriteLine($"[{processName} STDERR] {e.Data}"); }
-            };
-
             try
             {
+                using var process = new Process { StartInfo = psi };
+
                 if (!process.Start())
                     throw new InvalidOperationException($"Failed to start process: {fileName}");
 
-                process.BeginOutputReadLine();
-                process.BeginErrorReadLine();
+                // Read both streams as raw characters, splitting on \r and \n, so that
+                // tools using \r-only progress lines (like wimlib) are delivered immediately.
+                Task ReadRaw(StreamReader reader) => Task.Run(async () =>
+                {
+                    var sb = new StringBuilder();
+                    var buf = new char[4096];
+                    int n;
+                    while ((n = await reader.ReadAsync(buf, 0, buf.Length)) > 0)
+                    {
+                        for (int i = 0; i < n; i++)
+                        {
+                            char c = buf[i];
+                            if (c == '\r' || c == '\n')
+                            {
+                                if (sb.Length > 0)
+                                {
+                                    onLine(sb.ToString());
+                                    sb.Clear();
+                                }
+                            }
+                            else
+                            {
+                                sb.Append(c);
+                            }
+                        }
+                    }
+                    if (sb.Length > 0)
+                        onLine(sb.ToString());
+                });
+
+                var stdoutTask = ReadRaw(process.StandardOutput);
+                var stderrTask = ReadRaw(process.StandardError);
 
                 await process.WaitForExitAsync();
-                await Task.WhenAll(outputTcs.Task, errorTcs.Task);
+                await Task.WhenAll(stdoutTask, stderrTask);
 
                 Console.WriteLine($"\n{processName} process finished.");
 
