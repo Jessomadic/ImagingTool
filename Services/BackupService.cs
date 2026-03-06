@@ -148,6 +148,19 @@ namespace ImagingTool.Services
                 // the raw character stream and split on both \r and \n ourselves.
                 void handleLine(string line)
                 {
+                    // [WARNING] lines are non-fatal — print in yellow and continue.
+                    bool isWimlibWarning = line.StartsWith("[WARNING]", StringComparison.OrdinalIgnoreCase);
+                    if (isWimlibWarning)
+                    {
+                        lock (consoleLock)
+                        {
+                            Console.ForegroundColor = ConsoleColor.Yellow;
+                            Console.WriteLine($"\n[WimLib Warning] {line}");
+                            Console.ResetColor();
+                        }
+                        return;
+                    }
+
                     if (IsWimlibError(line))
                     {
                         if (line.Contains("Parent inode") && line.Contains("was missing from the MFT listing"))
@@ -458,6 +471,13 @@ namespace ImagingTool.Services
                 // --- Visual C++ / installer package caches ---
                 @"\ProgramData\Package Cache",
 
+                // --- OneDrive cloud-only stubs (unreadable from VSS on read-only volume) ---
+                // Files set to "online-only" in OneDrive are placeholders with no local data;
+                // trying to read them from a VSS snapshot fails with c000cf0c and causes wimlib
+                // to abort after too many retries.
+                @"\Users\*\OneDrive",
+                @"\Users\*\OneDrive - *",
+
                 // --- Misc artefact from previous builds ---
                 @"\b042787fde8c8f3f_0",
             };
@@ -466,6 +486,10 @@ namespace ImagingTool.Services
 
         internal static bool IsWimlibError(string line)
         {
+            // Exclude [WARNING] lines — they are non-fatal and handled separately.
+            if (line.StartsWith("[WARNING]", StringComparison.OrdinalIgnoreCase))
+                return false;
+
             return line.IndexOf("ERROR", StringComparison.OrdinalIgnoreCase) >= 0 ||
                    line.IndexOf("Failed", StringComparison.OrdinalIgnoreCase) >= 0 ||
                    line.IndexOf("Cannot", StringComparison.OrdinalIgnoreCase) >= 0;
