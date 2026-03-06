@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Windows.Forms;
 using ImagingTool.Helpers;
 using ImagingTool.Services;
@@ -49,14 +50,27 @@ namespace ImagingTool
 
             if (!VolumeHelper.IsRunningAsAdministrator())
             {
-                Console.ForegroundColor = ConsoleColor.Red;
-                Console.WriteLine("Error: Administrator privileges required.");
-                Console.ResetColor();
-                MessageBox.Show(
-                    "This tool requires administrator privileges to run.\nPlease restart as Administrator.",
-                    "Admin Required", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                Console.WriteLine("\nPress any key to exit...");
-                Console.ReadKey();
+                Console.WriteLine("Not running as administrator. Requesting elevation...");
+                try
+                {
+                    var psi = new ProcessStartInfo
+                    {
+                        FileName = Environment.ProcessPath ?? Process.GetCurrentProcess().MainModule!.FileName,
+                        Arguments = string.Join(" ", args.Select(a => $"\"{a}\"")),
+                        Verb = "runas",
+                        UseShellExecute = true
+                    };
+                    Process.Start(psi);
+                }
+                catch (System.ComponentModel.Win32Exception)
+                {
+                    // User clicked No on the UAC prompt.
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.WriteLine("Error: Administrator privileges are required to run this tool.");
+                    Console.ResetColor();
+                    Console.WriteLine("\nPress any key to exit...");
+                    Console.ReadKey();
+                }
                 return;
             }
 
