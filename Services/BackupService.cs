@@ -1,8 +1,5 @@
 using System.Diagnostics;
-using System.Globalization;
 using System.Text;
-using System.Text.RegularExpressions;
-using ImagingTool.Helpers;
 
 namespace ImagingTool.Services
 {
@@ -122,156 +119,37 @@ namespace ImagingTool.Services
                 Console.WriteLine($"\nExecuting WimLib command:");
                 Console.WriteLine($"{_settings.WimlibPath} {arguments}\n");
 
+                // Do NOT redirect stdout. wimlib calls GetConsoleMode() on its stdout handle —
+                // if that check fails (because stdout is a pipe) wimlib suppresses all \r-based
+                // progress output entirely. By inheriting our real console handle, wimlib detects
+                // a true console and writes its native progress directly to the terminal.
+                // We only redirect stderr so we can capture errors and warnings.
                 var psi = new ProcessStartInfo
                 {
                     FileName = _settings.WimlibPath,
                     Arguments = arguments,
-                    RedirectStandardOutput = true,
+                    RedirectStandardOutput = false,
                     RedirectStandardError = true,
                     UseShellExecute = false,
                     CreateNoWindow = true,
-                    StandardOutputEncoding = System.Text.Encoding.UTF8,
                     StandardErrorEncoding = System.Text.Encoding.UTF8
                 };
 
                 var startTime = DateTime.UtcNow;
-                long totalBytesProcessed = 0L;
-                long lastBytesProcessed = 0L;
-                var lastUpdateTime = startTime;
-                double lastKnownSpeedMbps = 0;
-                string lastFileName = "Initializing...";
-                object consoleLock = new object();
 
-                using var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
-
-                // Process one line of wimlib stderr output.
-                // wimlib uses bare \r (no \n) to overwrite progress in-place, so we read
-                // the raw character stream and split on both \r and \n ourselves.
-                void handleLine(string line)
-                {
-                    // [WARNING] lines are non-fatal — print in yellow and continue.
-                    bool isWimlibWarning = line.StartsWith("[WARNING]", StringComparison.OrdinalIgnoreCase);
-                    if (isWimlibWarning)
-                    {
-                        lock (consoleLock)
-                        {
-                            Console.ForegroundColor = ConsoleColor.Yellow;
-                            Console.WriteLine($"\n[WimLib Warning] {line}");
-                            Console.ResetColor();
-                        }
-                        return;
-                    }
-
-                    if (IsWimlibError(line))
-                    {
-                        if (line.Contains("Parent inode") && line.Contains("was missing from the MFT listing"))
-                        {
-                            lock (consoleLock)
-                            {
-                                Console.ForegroundColor = ConsoleColor.Yellow;
-                                Console.WriteLine($"\n[WimLib Warning] MFT inconsistency (continuing): {line}");
-                                Console.ResetColor();
-                            }
-                        }
-                        else
-                        {
-                            lock (consoleLock)
-                            {
-                                Console.ForegroundColor = ConsoleColor.Red;
-                                Console.Error.WriteLine($"\n[WimLib Error] {line}");
-                                Console.ResetColor();
-                            }
-                            wimlibReportedError = true;
-                        }
-                        return;
-                    }
-
-                    const string filePrefix = "Adding file: [";
-                    if (line.StartsWith(filePrefix) && line.EndsWith("]"))
-                    {
-                        lastFileName = line.Substring(filePrefix.Length, line.Length - filePrefix.Length - 1);
-                        return;
-                    }
-
-                    var match = Regex.Match(line,
-                        @"(\d+(?:[.,]\d+)?)\s*GiB\s*/\s*(\d+(?:[.,]\d+)?)\s*GiB\s*\((\d+)\s*%\s*done\)",
-                        RegexOptions.IgnoreCase);
-
-                    if (!match.Success) return;
-                    if (!double.TryParse(match.Groups[1].Value.Replace(',', '.'), NumberStyles.Any, CultureInfo.InvariantCulture, out double processedGiB)) return;
-                    if (!double.TryParse(match.Groups[2].Value.Replace(',', '.'), NumberStyles.Any, CultureInfo.InvariantCulture, out double totalGiB)) return;
-                    if (!double.TryParse(match.Groups[3].Value, NumberStyles.Any, CultureInfo.InvariantCulture, out double percentage)) return;
-
-                    totalBytesProcessed = (long)(processedGiB * 1024 * 1024 * 1024);
-                    var now = DateTime.UtcNow;
-                    var elapsedTime = now - startTime;
-                    var timeSinceLastUpdate = (now - lastUpdateTime).TotalSeconds;
-
-                    if (timeSinceLastUpdate > 0.2 && totalBytesProcessed > lastBytesProcessed)
-                    {
-                        lastKnownSpeedMbps = (totalBytesProcessed - lastBytesProcessed) / (1024.0 * 1024.0) / timeSinceLastUpdate;
-                        lastBytesProcessed = totalBytesProcessed;
-                        lastUpdateTime = now;
-                    }
-                    else if (timeSinceLastUpdate > 5)
-                    {
-                        lastUpdateTime = now;
-                    }
-
-                    double remainingGiB = totalGiB - processedGiB;
-
-                    string etaStr = "--:--:--";
-                    if (lastKnownSpeedMbps > 0)
-                    {
-                        var eta = TimeSpan.FromSeconds(remainingGiB * 1024.0 / lastKnownSpeedMbps);
-                        etaStr = eta.ToString(@"h\:mm\:ss");
-                    }
-
-                    string estimatedWimStr = "calculating...";
-                    try
-                    {
-                        long wimBytes = new FileInfo(destination).Length;
-                        if (wimBytes > 0 && processedGiB > 0.01)
-                        {
-                            double wimSizeGiB = wimBytes / (1024.0 * 1024.0 * 1024.0);
-                            double estimatedFinalGiB = (wimSizeGiB / processedGiB) * totalGiB;
-                            estimatedWimStr = $"~{estimatedFinalGiB:F2} GiB";
-                        }
-                    }
-                    catch { }
-
-                    float readMBps = _sourceDiskReadCounter?.NextValue() / (1024f * 1024f) ?? 0f;
-                    float writeMBps = _destDiskWriteCounter?.NextValue() / (1024f * 1024f) ?? 0f;
-
-                    lock (consoleLock)
-                    {
-                        string progressLine =
-                            $"\r{percentage:F1}% | {processedGiB:F2}/{totalGiB:F2} GiB" +
-                            $" | Left: {remainingGiB:F2} GiB" +
-                            $" | {lastKnownSpeedMbps:F1} MB/s" +
-                            $" | ETA: {etaStr}" +
-                            $" | Est. WIM: {estimatedWimStr}" +
-                            $" | R:{readMBps:F0} W:{writeMBps:F0} MB/s" +
-                            $" | {elapsedTime:h\\:mm\\:ss}" +
-                            $" | {VolumeHelper.Truncate(lastFileName, 35)}";
-                        Console.Write(new string(' ', VolumeHelper.SafeConsoleWidth()) + "\r");
-                        Console.Write(progressLine.PadRight(VolumeHelper.SafeConsoleWidth()));
-                    }
-                }
+                using var process = new Process { StartInfo = psi };
 
                 if (!process.Start())
                     throw new InvalidOperationException($"Failed to start WimLib process: {_settings.WimlibPath}");
 
-                // wimlib writes progress (GiB done, file names) to stdout and errors/warnings
-                // to stderr. Both use bare \r to overwrite lines in place, so we read each
-                // stream as raw characters — splitting on \r and \n — and route everything
-                // through handleLine. This avoids the \n-only buffering of BeginOutputReadLine.
-                Task ReadRaw(StreamReader reader) => Task.Run(async () =>
+                // Read stderr for error and warning detection only.
+                // wimlib writes errors to stderr; progress goes to stdout (→ our real console).
+                var stderrTask = Task.Run(async () =>
                 {
                     var sb = new StringBuilder();
                     var buf = new char[4096];
                     int n;
-                    while ((n = await reader.ReadAsync(buf, 0, buf.Length)) > 0)
+                    while ((n = await process.StandardError.ReadAsync(buf, 0, buf.Length)) > 0)
                     {
                         for (int i = 0; i < n; i++)
                         {
@@ -280,8 +158,9 @@ namespace ImagingTool.Services
                             {
                                 if (sb.Length > 0)
                                 {
-                                    handleLine(sb.ToString());
+                                    string line = sb.ToString();
                                     sb.Clear();
+                                    HandleStderrLine(line, ref wimlibReportedError);
                                 }
                             }
                             else
@@ -291,19 +170,40 @@ namespace ImagingTool.Services
                         }
                     }
                     if (sb.Length > 0)
-                        handleLine(sb.ToString());
+                        HandleStderrLine(sb.ToString(), ref wimlibReportedError);
                 });
 
-                var stdoutTask = ReadRaw(process.StandardOutput);
-                var stderrTask = ReadRaw(process.StandardError);
+                // Print disk I/O and WIM file size every 15 seconds as a supplemental stat line.
+                // Uses a leading newline so it doesn't trample wimlib's \r progress line.
+                using var statsCts = new CancellationTokenSource();
+                var statsTask = Task.Run(async () =>
+                {
+                    while (true)
+                    {
+                        try { await Task.Delay(15_000, statsCts.Token); }
+                        catch (OperationCanceledException) { return; }
+
+                        float readMBps = (_sourceDiskReadCounter?.NextValue() ?? 0f) / (1024f * 1024f);
+                        float writeMBps = (_destDiskWriteCounter?.NextValue() ?? 0f) / (1024f * 1024f);
+                        var elapsed = DateTime.UtcNow - startTime;
+
+                        string wimInfo = "";
+                        try
+                        {
+                            long wimBytes = new FileInfo(destination).Length;
+                            if (wimBytes > 0)
+                                wimInfo = $" | WIM: {wimBytes / (1024.0 * 1024.0 * 1024.0):F2} GiB";
+                        }
+                        catch { }
+
+                        Console.WriteLine($"\n  [{elapsed:h\\:mm\\:ss}] Read: {readMBps:F0} MB/s | Write: {writeMBps:F0} MB/s{wimInfo}");
+                    }
+                });
 
                 await process.WaitForExitAsync();
-                await Task.WhenAll(stdoutTask, stderrTask);
-
-                lock (consoleLock)
-                {
-                    Console.Write(new string(' ', VolumeHelper.SafeConsoleWidth()) + "\r");
-                }
+                statsCts.Cancel();
+                await stderrTask;
+                try { await statsTask; } catch (OperationCanceledException) { }
 
                 Console.WriteLine("\nWimLib process finished.");
 
@@ -338,6 +238,34 @@ namespace ImagingTool.Services
 
                 _sourceDiskReadCounter?.Dispose();
                 _destDiskWriteCounter?.Dispose();
+            }
+        }
+
+        private static void HandleStderrLine(string line, ref bool wimlibReportedError)
+        {
+            if (line.StartsWith("[WARNING]", StringComparison.OrdinalIgnoreCase))
+            {
+                Console.ForegroundColor = ConsoleColor.Yellow;
+                Console.WriteLine($"\n[WimLib Warning] {line}");
+                Console.ResetColor();
+                return;
+            }
+
+            if (IsWimlibError(line))
+            {
+                if (line.Contains("Parent inode") && line.Contains("was missing from the MFT listing"))
+                {
+                    Console.ForegroundColor = ConsoleColor.Yellow;
+                    Console.WriteLine($"\n[WimLib Warning] MFT inconsistency (continuing): {line}");
+                    Console.ResetColor();
+                }
+                else
+                {
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.Error.WriteLine($"\n[WimLib Error] {line}");
+                    Console.ResetColor();
+                    wimlibReportedError = true;
+                }
             }
         }
 
