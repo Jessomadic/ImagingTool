@@ -236,15 +236,10 @@ namespace ImagingTool.Services
         {
             if (failedPrograms.Count == 0) return;
 
-            Console.WriteLine();
-            Console.ForegroundColor = ConsoleColor.Yellow;
-            Console.WriteLine($"--- {failedPrograms.Count} item(s) could not be fully restored ---");
-            Console.WriteLine("These had locked files held by running services. Their folder");
-            Console.WriteLine("structure exists but the files inside are incomplete or missing.");
-            Console.WriteLine("You will need to reinstall them:");
-            Console.WriteLine();
+            Console.ForegroundColor = ConsoleColor.DarkGray;
+            Console.WriteLine($"\n{failedPrograms.Count} director{(failedPrograms.Count == 1 ? "y" : "ies")} skipped (already installed/running on this system):");
             foreach (string p in failedPrograms)
-                Console.WriteLine($"  • {p}");
+                Console.WriteLine($"  {p}");
             Console.ResetColor();
         }
 
