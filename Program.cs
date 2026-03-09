@@ -93,11 +93,18 @@ namespace ImagingTool
             string? extractDstArg = args
                 .FirstOrDefault(a => a.StartsWith("-extractdst=", StringComparison.OrdinalIgnoreCase))
                 ?.Substring("-extractdst=".Length).Trim('"');
+            string? swSrcArg = args
+                .FirstOrDefault(a => a.StartsWith("-swsrc=", StringComparison.OrdinalIgnoreCase))
+                ?.Substring("-swsrc=".Length).Trim('"');
+            string? swDstArg = args
+                .FirstOrDefault(a => a.StartsWith("-swdst=", StringComparison.OrdinalIgnoreCase))
+                ?.Substring("-swdst=".Length).Trim('"');
 
             bool hasCliMode = !string.IsNullOrWhiteSpace(destinationArg) ||
                               (!string.IsNullOrWhiteSpace(sourceArg) && !string.IsNullOrWhiteSpace(targetArg)) ||
                               !string.IsNullOrWhiteSpace(verifyArg) ||
-                              !string.IsNullOrWhiteSpace(extractSrcArg);
+                              !string.IsNullOrWhiteSpace(extractSrcArg) ||
+                              !string.IsNullOrWhiteSpace(swSrcArg);
 
             string? choice = null;
             if (!hasCliMode)
@@ -107,7 +114,8 @@ namespace ImagingTool
                 Console.WriteLine("  2. Restore System Image");
                 Console.WriteLine("  3. Verify WIM Image");
                 Console.WriteLine("  4. Extract to Existing Install");
-                Console.Write("Enter choice (1, 2, 3, or 4): ");
+                Console.WriteLine("  5. Extract Software Only");
+                Console.Write("Enter choice (1-5): ");
                 choice = Console.ReadLine();
             }
 
@@ -115,6 +123,7 @@ namespace ImagingTool
             bool isRestore = choice == "2" || (!string.IsNullOrWhiteSpace(sourceArg) && !string.IsNullOrWhiteSpace(targetArg));
             bool isVerify = choice == "3" || !string.IsNullOrWhiteSpace(verifyArg);
             bool isExtract = choice == "4" || !string.IsNullOrWhiteSpace(extractSrcArg);
+            bool isSoftwareExtract = choice == "5" || !string.IsNullOrWhiteSpace(swSrcArg);
 
             var processRunner = new ProcessRunner();
             var requirements = new RequirementsService(settings);
@@ -242,6 +251,43 @@ namespace ImagingTool
                             "Extraction complete!\n\nPrograms, user data, and app registry have been merged.\n" +
                             "Log out and back in for per-user settings (HKCU) to take effect.",
                             "Extract Complete", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
+                else if (isSoftwareExtract)
+                {
+                    string? swSrc = swSrcArg;
+                    if (string.IsNullOrWhiteSpace(swSrc))
+                    {
+                        Console.WriteLine("Select the WIM file to extract software from...");
+                        swSrc = await DialogHelper.ShowOpenDialogOnStaThreadAsync();
+                    }
+
+                    if (string.IsNullOrWhiteSpace(swSrc))
+                        throw new OperationCanceledException("No WIM file selected.");
+
+                    if (!File.Exists(swSrc))
+                        throw new FileNotFoundException($"WIM file not found: {swSrc}");
+
+                    string? swDst = swDstArg;
+                    if (string.IsNullOrWhiteSpace(swDst))
+                    {
+                        Console.Write("Enter target root drive (e.g. C:\\): ");
+                        swDst = Console.ReadLine()?.Trim().Trim('"');
+                    }
+
+                    if (string.IsNullOrWhiteSpace(swDst) || !Directory.Exists(swDst))
+                        throw new ArgumentException($"Target drive not found or not specified: {swDst}");
+
+                    await extractService.PerformSoftwareExtraction(swSrc, swDst);
+
+                    Console.ForegroundColor = ConsoleColor.Green;
+                    Console.WriteLine("\nSoftware extract completed.");
+                    Console.ResetColor();
+
+                    if (string.IsNullOrWhiteSpace(swSrcArg))
+                        MessageBox.Show(
+                            "Software extraction complete!\n\nPrograms and app registry have been merged.\n" +
+                            "User profiles were not touched.",
+                            "Software Extract Complete", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 }
                 else
                 {

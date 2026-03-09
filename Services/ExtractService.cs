@@ -11,10 +11,18 @@ namespace ImagingTool.Services
 
         private const string TempHiveKey = "IMGTOOL_SW";
 
-        // File system paths to extract from the WIM (relative to image root)
+        // All file system paths (full extract)
         private static readonly string[] FileSystemPaths =
         {
             @"\Users",
+            @"\Program Files",
+            @"\Program Files (x86)",
+            @"\ProgramData",
+        };
+
+        // Software-only paths (no user profiles)
+        private static readonly string[] SoftwarePaths =
+        {
             @"\Program Files",
             @"\Program Files (x86)",
             @"\ProgramData",
@@ -45,11 +53,11 @@ namespace ImagingTool.Services
 
         public async Task PerformExtraction(string sourceWim, string targetRoot)
         {
-            Console.WriteLine("\n--- Data Extraction ---");
+            Console.WriteLine("\n--- Data Extraction (Full) ---");
             Console.WriteLine($"Source WIM : {sourceWim}");
             Console.WriteLine($"Target Root: {targetRoot}");
 
-            await ExtractFileSystem(sourceWim, targetRoot);
+            await ExtractFileSystem(sourceWim, targetRoot, FileSystemPaths);
             await MergeHklmRegistry(sourceWim);
 
             Console.ForegroundColor = ConsoleColor.Green;
@@ -60,13 +68,27 @@ namespace ImagingTool.Services
             Console.WriteLine("      logging out and back in with the matching username.");
         }
 
-        private async Task ExtractFileSystem(string sourceWim, string targetRoot)
+        public async Task PerformSoftwareExtraction(string sourceWim, string targetRoot)
+        {
+            Console.WriteLine("\n--- Software Extraction ---");
+            Console.WriteLine($"Source WIM : {sourceWim}");
+            Console.WriteLine($"Target Root: {targetRoot}");
+
+            await ExtractFileSystem(sourceWim, targetRoot, SoftwarePaths);
+            await MergeHklmRegistry(sourceWim);
+
+            Console.ForegroundColor = ConsoleColor.Green;
+            Console.WriteLine("\nSoftware extraction complete.");
+            Console.ResetColor();
+        }
+
+        private async Task ExtractFileSystem(string sourceWim, string targetRoot, string[] paths)
         {
             Console.WriteLine("\n--- Extracting file system ---");
             string dest = targetRoot.TrimEnd('\\', '/');
             var skipped = new List<string>();
 
-            foreach (string wimPath in FileSystemPaths)
+            foreach (string wimPath in paths)
             {
                 Console.WriteLine($"\nExtracting: {wimPath}");
                 string args = $"extract \"{sourceWim}\" 1 \"{wimPath}\" --dest-dir=\"{dest}\" --no-acls";
