@@ -69,7 +69,7 @@ namespace ImagingTool.Services
             foreach (string wimPath in FileSystemPaths)
             {
                 Console.WriteLine($"\nExtracting: {wimPath}");
-                string args = $"extract \"{sourceWim}\" 1 \"{wimPath}\" --dest-dir=\"{dest}\" --no-acls --tolerant";
+                string args = $"extract \"{sourceWim}\" 1 \"{wimPath}\" --dest-dir=\"{dest}\" --no-acls";
                 bool ok = await _processRunner.RunProcessAsync(_settings.WimlibPath, args, "WimLib Extract");
                 if (ok) continue;
 
@@ -91,7 +91,7 @@ namespace ImagingTool.Services
                     var psi = new ProcessStartInfo
                     {
                         FileName = _settings.WimlibPath,
-                        Arguments = $"extract \"{sourceWim}\" 1 \"{wimPath}\\{name}\" --dest-dir=\"{dest}\" --no-acls --tolerant",
+                        Arguments = $"extract \"{sourceWim}\" 1 \"{wimPath}\\{name}\" --dest-dir=\"{dest}\" --no-acls",
                         UseShellExecute = false,
                         CreateNoWindow = true,
                         RedirectStandardOutput = true,
@@ -106,11 +106,24 @@ namespace ImagingTool.Services
                     await Task.WhenAll(drainOut, drainErr);
 
                     if (proc.ExitCode == 0)
+                    {
                         Console.WriteLine("ok");
+                    }
                     else
                     {
-                        Console.WriteLine("skipped (already installed)");
-                        skipped.Add($"{wimPath}\\{name}");
+                        // Only call it "already installed" if the directory actually has files.
+                        // An empty folder is just a skeleton wimlib created in the first pass —
+                        // calling that "already installed" would be misleading.
+                        bool hasFiles = Directory.EnumerateFiles(subDir, "*", SearchOption.AllDirectories).Any();
+                        if (hasFiles)
+                        {
+                            Console.WriteLine("skipped (already installed)");
+                            skipped.Add($"{wimPath}\\{name}");
+                        }
+                        else
+                        {
+                            Console.WriteLine("FAILED (could not extract — check permissions)");
+                        }
                     }
                 }
             }
@@ -140,6 +153,18 @@ namespace ImagingTool.Services
 
                 Console.WriteLine("Extracting HKLM SOFTWARE hive from WIM...");
                 bool extracted = await _processRunner.RunProcessAsync(_settings.WimlibPath, extractArgs, "WimLib Extract");
+
+                // Also extract the transaction log files. reg.exe load requires these to be
+                // in the same directory as the hive when the hive was captured live (dirty bit
+                // set) — without them reg.exe reports "corrupt". Ignore failures; the log files
+                // may not exist in the WIM if the hive was cleanly committed at capture time.
+                foreach (string logFile in new[] { "SOFTWARE.LOG", "SOFTWARE.LOG1", "SOFTWARE.LOG2" })
+                {
+                    string logArgs =
+                        $"extract \"{sourceWim}\" 1 \"\\Windows\\System32\\config\\{logFile}\" " +
+                        $"--dest-dir=\"{tempDir}\" --no-acls";
+                    await _processRunner.RunProcessAsync(_settings.WimlibPath, logArgs, "WimLib Extract");
+                }
 
                 if (!extracted)
                 {
