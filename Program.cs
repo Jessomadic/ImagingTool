@@ -17,7 +17,7 @@ namespace ImagingTool
             {
                 var configuration = new ConfigurationBuilder()
                     .SetBasePath(AppContext.BaseDirectory)
-                    .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
+                    .AddJsonFile("appsettings.json", optional: false, reloadOnChange: false)
                     .Build();
 
                 settings = configuration.GetSection("AppSettings").Get<AppSettings>()

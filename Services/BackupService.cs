@@ -87,7 +87,13 @@ namespace ImagingTool.Services
             if (string.IsNullOrEmpty(systemDrive))
                 throw new InvalidOperationException("Could not determine the system drive root.");
 
-            int threads = Environment.ProcessorCount;
+            // Thread count: configurable, default to processor count capped at 16.
+            // Beyond 16 threads, extra workers fight over I/O rather than adding throughput
+            // and inflate memory pressure (each LZMS thread holds its own compression context).
+            int threads = _settings.WimThreadCount > 0
+                ? _settings.WimThreadCount
+                : Math.Min(Environment.ProcessorCount, 16);
+
             Console.WriteLine($"\nStarting backup of system drive '{systemDrive}' to '{destination}'...");
             Console.WriteLine("Using Volume Shadow Copy Service (VSS).");
             Console.WriteLine($"Using {threads} threads.");
@@ -99,8 +105,9 @@ namespace ImagingTool.Services
             // On a network destination this dramatically reduces write volume and is almost
             // always faster overall, even accounting for the extra CPU work.
             bool useSolid = !compressionArg.Equals("none", StringComparison.OrdinalIgnoreCase);
-            string solidFlags = useSolid ? " --solid --solid-chunk-size=64M" : "";
-            if (useSolid) Console.WriteLine("Solid mode: ON (64 MiB blocks)");
+            int chunkMiB = _settings.WimSolidChunkSizeMiB > 0 ? _settings.WimSolidChunkSizeMiB : 64;
+            string solidFlags = useSolid ? $" --solid --solid-chunk-size={chunkMiB}M" : "";
+            if (useSolid) Console.WriteLine($"Solid mode: ON ({chunkMiB} MiB blocks)");
 
             var configFilePath = Path.Combine(Path.GetTempPath(), $"wimlib-config-{Guid.NewGuid()}.txt");
             Console.WriteLine($"Using temporary config file for exclusions: {configFilePath}");
@@ -111,10 +118,15 @@ namespace ImagingTool.Services
             {
                 await WriteExclusionConfig(configFilePath);
 
+                // --check embeds SHA-1 integrity hashes; disable for faster local backups.
+                // --continue pushes through individual file read errors rather than aborting.
+                string checkFlag = _settings.WimEnableIntegrityCheck ? " --check" : "";
+                string continueFlag = _settings.IgnoreFileReadErrors ? " --continue" : "";
+
                 var arguments =
                     $"capture \"{systemDrive.TrimEnd('\\')}\" \"{destination}\" " +
                     $"\"Windows System Backup\" \"Backup taken on {DateTime.Now:yyyy-MM-dd HH:mm:ss}\" " +
-                    $"--snapshot --check --config=\"{configFilePath}\" --compress={compressionArg}{solidFlags} --threads={threads}";
+                    $"--snapshot{checkFlag}{continueFlag} --config=\"{configFilePath}\" --compress={compressionArg}{solidFlags} --threads={threads}";
 
                 Console.WriteLine($"\nExecuting WimLib command:");
                 Console.WriteLine($"{_settings.WimlibPath} {arguments}\n");
@@ -147,7 +159,7 @@ namespace ImagingTool.Services
                 var stderrTask = Task.Run(async () =>
                 {
                     var sb = new StringBuilder();
-                    var buf = new char[4096];
+                    var buf = new char[65536]; // match kernel pipe buffer size
                     int n;
                     while ((n = await process.StandardError.ReadAsync(buf, 0, buf.Length)) > 0)
                     {

@@ -9,6 +9,8 @@ namespace ImagingTool.Services
     public class RequirementsService
     {
         private readonly AppSettings _settings;
+        // Reuse a single HttpClient across all downloads (OPT-16).
+        private static readonly HttpClient _httpClient = new HttpClient();
 
         public RequirementsService(AppSettings settings)
         {
@@ -47,7 +49,7 @@ namespace ImagingTool.Services
         {
             Console.WriteLine($"Checking for .NET Runtime {_settings.DotNetRequiredVersion} or later...");
 
-            if (IsDotNetRuntimeInstalled(_settings.DotNetRequiredVersion))
+            if (await IsDotNetRuntimeInstalledAsync(_settings.DotNetRequiredVersion))
                 return true;
 
             Console.ForegroundColor = ConsoleColor.Yellow;
@@ -65,7 +67,7 @@ namespace ImagingTool.Services
             }
 
             // Verify the runtime is now detectable
-            if (!IsDotNetRuntimeInstalled(_settings.DotNetRequiredVersion))
+            if (!await IsDotNetRuntimeInstalledAsync(_settings.DotNetRequiredVersion))
             {
                 Console.ForegroundColor = ConsoleColor.Yellow;
                 Console.WriteLine("Runtime installed but not yet detectable — a reboot may be required.");
@@ -95,11 +97,12 @@ namespace ImagingTool.Services
                 Console.WriteLine($"Downloading .NET Runtime installer from:");
                 Console.WriteLine($"  {_settings.DotNetRuntimeInstallerUrl}");
 
-                using (var client = new HttpClient())
+                // Stream to disk rather than buffering 50+ MB in RAM (OPT-7).
+                _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("ImagingTool/1.0");
+                using (var httpStream = await _httpClient.GetStreamAsync(_settings.DotNetRuntimeInstallerUrl))
+                using (var fileStream = new FileStream(installerPath, FileMode.Create, FileAccess.Write, FileShare.None, 81920, useAsync: true))
                 {
-                    client.DefaultRequestHeaders.Add("User-Agent", "ImagingTool/1.0");
-                    var bytes = await client.GetByteArrayAsync(_settings.DotNetRuntimeInstallerUrl);
-                    await File.WriteAllBytesAsync(installerPath, bytes);
+                    await httpStream.CopyToAsync(fileStream);
                 }
 
                 Console.WriteLine("Download complete. Running installer silently...");
@@ -155,7 +158,7 @@ namespace ImagingTool.Services
             }
         }
 
-        private static bool IsDotNetRuntimeInstalled(string requiredVersionString)
+        private static async Task<bool> IsDotNetRuntimeInstalledAsync(string requiredVersionString)
         {
             if (!Version.TryParse(requiredVersionString, out var requiredVersion))
             {
@@ -182,8 +185,9 @@ namespace ImagingTool.Services
                     return false;
                 }
 
-                string output = process.StandardOutput.ReadToEnd();
-                process.WaitForExit();
+                // Drain stdout before WaitForExitAsync to avoid pipe deadlock (OPT-8).
+                string output = await process.StandardOutput.ReadToEndAsync();
+                await process.WaitForExitAsync();
 
                 if (process.ExitCode != 0)
                 {
@@ -247,14 +251,15 @@ namespace ImagingTool.Services
             {
                 Directory.CreateDirectory(tempDir);
 
-                using (var client = new HttpClient())
+                // Stream directly to disk — avoids buffering the entire ZIP in RAM (OPT-7).
+                _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("ImagingTool/1.0");
+                Console.WriteLine("Starting download...");
+                using (var httpStream = await _httpClient.GetStreamAsync(_settings.WimlibDownloadUrl))
+                using (var fileStream = new FileStream(zipPath, FileMode.Create, FileAccess.Write, FileShare.None, 81920, useAsync: true))
                 {
-                    client.DefaultRequestHeaders.Add("User-Agent", "ImagingTool/1.0");
-                    Console.WriteLine("Starting download...");
-                    var zipBytes = await client.GetByteArrayAsync(_settings.WimlibDownloadUrl);
-                    Console.WriteLine("Download complete. Writing to disk...");
-                    await File.WriteAllBytesAsync(zipPath, zipBytes);
+                    await httpStream.CopyToAsync(fileStream);
                 }
+                Console.WriteLine("Download complete.");
 
                 // File handle is fully released before extraction begins
                 Console.WriteLine($"Extracting WimLib archive to: {tempDir}");

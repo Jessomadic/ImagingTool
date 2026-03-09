@@ -5,12 +5,15 @@ namespace ImagingTool.Helpers
 {
     public class ProcessRunner : IProcessRunner
     {
+        // Shared lock — RunProcessAsync is not re-entrant in practice; a static lock
+        // avoids allocating a new object on every call (OPT-12).
+        private static readonly object _consoleLock = new();
+
         public async Task<bool> RunProcessAsync(string fileName, string arguments, string processName)
         {
-            object consoleLock = new object();
             return await RunProcessWithProgressAsync(fileName, arguments, processName, line =>
             {
-                lock (consoleLock) { Console.WriteLine(line); }
+                lock (_consoleLock) { Console.WriteLine(line); }
             });
         }
 
@@ -41,7 +44,7 @@ namespace ImagingTool.Helpers
                 var stderrTask = Task.Run(async () =>
                 {
                     var sb = new StringBuilder();
-                    var buf = new char[4096];
+                    var buf = new char[65536]; // match kernel pipe buffer (OPT-4)
                     int n;
                     while ((n = await process.StandardError.ReadAsync(buf, 0, buf.Length)) > 0)
                     {
@@ -109,12 +112,12 @@ namespace ImagingTool.Helpers
                 if (!process.Start())
                     throw new InvalidOperationException($"Failed to start process: {fileName}");
 
-                // Read both streams as raw characters, splitting on \r and \n, so that
-                // tools using \r-only progress lines (like wimlib) are delivered immediately.
+                // 64 KiB buffer matches the kernel pipe buffer size so each ReadAsync drains
+                // the pipe in one system call rather than 16 (OPT-4).
                 Task ReadRaw(StreamReader reader) => Task.Run(async () =>
                 {
                     var sb = new StringBuilder();
-                    var buf = new char[4096];
+                    var buf = new char[65536];
                     int n;
                     while ((n = await reader.ReadAsync(buf, 0, buf.Length)) > 0)
                     {

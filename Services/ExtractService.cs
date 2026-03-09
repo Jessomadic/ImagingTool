@@ -115,9 +115,9 @@ namespace ImagingTool.Services
                     else
                     {
                         // Only call it "already installed" if the directory actually has files.
-                        // An empty folder is just a skeleton wimlib created in the first pass —
-                        // calling that "already installed" would be misleading.
-                        bool hasFiles = Directory.EnumerateFiles(subDir, "*", SearchOption.AllDirectories).Any();
+                        // An empty folder is just a skeleton wimlib created in the first pass.
+                        // Use a shallow single-level check — fast even on slow drives (OPT-5).
+                        bool hasFiles = Directory.EnumerateFileSystemEntries(subDir).Any();
                         if (hasFiles)
                         {
                             Console.WriteLine("skipped (already installed)");
@@ -157,17 +157,16 @@ namespace ImagingTool.Services
                 Console.WriteLine("Extracting HKLM SOFTWARE hive from WIM...");
                 bool extracted = await _processRunner.RunProcessAsync(_settings.WimlibPath, extractArgs, "WimLib Extract");
 
-                // Also extract the transaction log files. reg.exe load requires these to be
-                // in the same directory as the hive when the hive was captured live (dirty bit
-                // set) — without them reg.exe reports "corrupt". Ignore failures; the log files
-                // may not exist in the WIM if the hive was cleanly committed at capture time.
-                foreach (string logFile in new[] { "SOFTWARE.LOG", "SOFTWARE.LOG1", "SOFTWARE.LOG2" })
-                {
-                    string logArgs =
-                        $"extract \"{sourceWim}\" 1 \"\\Windows\\System32\\config\\{logFile}\" " +
-                        $"--dest-dir=\"{tempDir}\" --no-acls";
-                    await _processRunner.RunProcessAsync(_settings.WimlibPath, logArgs, "WimLib Extract");
-                }
+                // Also extract the transaction log files in one batched call (OPT-2).
+                // reg.exe load needs these present when the hive was captured live (dirty bit set).
+                // Failures are ignored — logs may not exist in the WIM if cleanly committed.
+                string logBatchArgs =
+                    $"extract \"{sourceWim}\" 1 " +
+                    $"\"\\Windows\\System32\\config\\SOFTWARE.LOG\" " +
+                    $"\"\\Windows\\System32\\config\\SOFTWARE.LOG1\" " +
+                    $"\"\\Windows\\System32\\config\\SOFTWARE.LOG2\" " +
+                    $"--dest-dir=\"{tempDir}\" --no-acls";
+                await _processRunner.RunProcessAsync(_settings.WimlibPath, logBatchArgs, "WimLib Extract");
 
                 if (!extracted)
                 {
@@ -199,13 +198,12 @@ namespace ImagingTool.Services
 
                 try
                 {
-                    MergeKeys();
+                    await MergeKeys(tempKey);
                 }
                 finally
                 {
-                    // Force-close any open RegistryKey handles before unloading
-                    GC.Collect();
-                    GC.WaitForPendingFinalizers();
+                    // All RegistryKey handles opened in MergeKeys are disposed via using-statements
+                    // before we reach here, so no GC.Collect needed (OPT-15).
                     await _processRunner.RunProcessAsync(RegExePath, $"unload \"{tempKey}\"", "reg unload");
                 }
             }
@@ -215,14 +213,16 @@ namespace ImagingTool.Services
             }
         }
 
-        private void MergeKeys()
+        // OPT-14: Replace recursive .NET Registry API (thousands of individual syscalls) with
+        // reg.exe copy, which does a native bulk subtree copy in a single process call.
+        // We still use the Registry API to enumerate which keys to copy — only the actual
+        // data transfer moves to reg.exe copy.
+        private async Task MergeKeys(string tempKey)
         {
             using var source = Registry.LocalMachine.OpenSubKey(TempHiveKey);
-            using var dest = Registry.LocalMachine.OpenSubKey("SOFTWARE", writable: true);
-
-            if (source == null || dest == null)
+            if (source == null)
             {
-                Console.WriteLine("Warning: Could not open registry keys for merging.");
+                Console.WriteLine("Warning: Could not open loaded hive for enumeration.");
                 return;
             }
 
@@ -231,86 +231,34 @@ namespace ImagingTool.Services
             {
                 if (SkipTopLevelKeys.Contains(name)) continue;
                 Console.WriteLine($"  HKLM\\SOFTWARE\\{name}");
-                try
-                {
-                    using var src = source.OpenSubKey(name);
-                    using var dst = dest.CreateSubKey(name, writable: true);
-                    if (src != null && dst != null) CopyKey(src, dst);
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"  Skipped {name}: {ex.Message}");
-                }
+                await RegCopy($"{tempKey}\\{name}", $"HKLM\\SOFTWARE\\{name}");
             }
 
             // Selected Microsoft subkeys needed for app recognition
-            using var srcMs = source.OpenSubKey("Microsoft");
-            using var dstMs = dest.OpenSubKey("Microsoft", writable: true);
-            if (srcMs != null && dstMs != null)
+            foreach (string subPath in MicrosoftAppSubKeys)
             {
-                foreach (string subPath in MicrosoftAppSubKeys)
-                {
-                    Console.WriteLine($"  HKLM\\SOFTWARE\\Microsoft\\{subPath}");
-                    try
-                    {
-                        using var src = srcMs.OpenSubKey(subPath);
-                        using var dst = dstMs.CreateSubKey(subPath, writable: true);
-                        if (src != null && dst != null) CopyKey(src, dst);
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"  Skipped Microsoft\\{subPath}: {ex.Message}");
-                    }
-                }
+                Console.WriteLine($"  HKLM\\SOFTWARE\\Microsoft\\{subPath}");
+                await RegCopy($"{tempKey}\\Microsoft\\{subPath}", $"HKLM\\SOFTWARE\\Microsoft\\{subPath}");
             }
 
             // WOW6432Node — 32-bit app registry on 64-bit Windows
             using var srcWow = source.OpenSubKey("WOW6432Node");
-            using var dstWow = dest.OpenSubKey("WOW6432Node", writable: true);
-            if (srcWow != null && dstWow != null)
+            if (srcWow != null)
             {
                 foreach (string name in srcWow.GetSubKeyNames())
                 {
                     if (name.Equals("Microsoft", StringComparison.OrdinalIgnoreCase)) continue;
                     Console.WriteLine($"  HKLM\\SOFTWARE\\WOW6432Node\\{name}");
-                    try
-                    {
-                        using var src = srcWow.OpenSubKey(name);
-                        using var dst = dstWow.CreateSubKey(name, writable: true);
-                        if (src != null && dst != null) CopyKey(src, dst);
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"  Skipped WOW6432Node\\{name}: {ex.Message}");
-                    }
+                    await RegCopy($"{tempKey}\\WOW6432Node\\{name}", $"HKLM\\SOFTWARE\\WOW6432Node\\{name}");
                 }
             }
         }
 
-        private static void CopyKey(RegistryKey source, RegistryKey destination)
+        private async Task RegCopy(string src, string dest)
         {
-            foreach (string name in source.GetValueNames())
-            {
-                try
-                {
-                    var value = source.GetValue(name, null, RegistryValueOptions.DoNotExpandEnvironmentNames);
-                    if (value == null) continue;
-                    destination.SetValue(name, value, source.GetValueKind(name));
-                }
-                catch { }
-            }
-
-            foreach (string subName in source.GetSubKeyNames())
-            {
-                try
-                {
-                    using var srcSub = source.OpenSubKey(subName);
-                    if (srcSub == null) continue;
-                    using var dstSub = destination.CreateSubKey(subName, writable: true);
-                    CopyKey(srcSub, dstSub);
-                }
-                catch { }
-            }
+            // /s = copy all subkeys recursively, /f = force overwrite without prompting
+            await _processRunner.RunProcessAsync(
+                RegExePath, $"copy \"{src}\" \"{dest}\" /s /f", "reg copy");
         }
     }
 }
