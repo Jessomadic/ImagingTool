@@ -67,10 +67,19 @@ namespace ImagingTool.Services
             foreach (string wimPath in FileSystemPaths)
             {
                 Console.WriteLine($"\nExtracting: {wimPath}");
-                string args = $"extract \"{sourceWim}\" 1 \"{wimPath}\" --dest-dir=\"{dest}\" --no-acls";
+                // --tolerant skips files/directories that can't be written (e.g. locked by
+                // running services like Office ClickToRun) instead of aborting the whole tree.
+                string args = $"extract \"{sourceWim}\" 1 \"{wimPath}\" --dest-dir=\"{dest}\" --no-acls --tolerant";
                 bool ok = await _processRunner.RunProcessAsync(_settings.WimlibPath, args, "WimLib Extract");
                 if (!ok)
+                {
+                    Console.ForegroundColor = ConsoleColor.Yellow;
                     Console.WriteLine($"  Warning: Some files in {wimPath} could not be extracted.");
+                    Console.WriteLine("  This is normal if services are running that hold locks on their directories");
+                    Console.WriteLine("  (e.g. Office ClickToRun, antivirus, VPN clients). Those programs will");
+                    Console.WriteLine("  need to be reinstalled. Everything else should have extracted fine.");
+                    Console.ResetColor();
+                }
             }
         }
 
@@ -83,8 +92,6 @@ namespace ImagingTool.Services
 
             try
             {
-                // Wimlib preserves the full path structure, so SOFTWARE ends up at:
-                // <tempDir>\Windows\System32\config\SOFTWARE
                 string extractArgs =
                     $"extract \"{sourceWim}\" 1 \"\\Windows\\System32\\config\\SOFTWARE\" " +
                     $"--dest-dir=\"{tempDir}\" --no-acls";
@@ -92,10 +99,20 @@ namespace ImagingTool.Services
                 Console.WriteLine("Extracting HKLM SOFTWARE hive from WIM...");
                 bool extracted = await _processRunner.RunProcessAsync(_settings.WimlibPath, extractArgs, "WimLib Extract");
 
-                string hivePath = Path.Combine(tempDir, "Windows", "System32", "config", "SOFTWARE");
-                if (!extracted || !File.Exists(hivePath))
+                if (!extracted)
                 {
                     Console.WriteLine("Warning: Could not extract SOFTWARE hive. Registry merge skipped.");
+                    return;
+                }
+
+                // Wimlib may place the file directly in tempDir or preserve the full WIM path
+                // structure (tempDir\Windows\System32\config\SOFTWARE) depending on version.
+                // Search recursively so we find it either way.
+                string? hivePath = Directory.GetFiles(tempDir, "SOFTWARE", SearchOption.AllDirectories)
+                                            .FirstOrDefault();
+                if (string.IsNullOrEmpty(hivePath))
+                {
+                    Console.WriteLine("Warning: SOFTWARE hive not found after extraction. Registry merge skipped.");
                     return;
                 }
 
