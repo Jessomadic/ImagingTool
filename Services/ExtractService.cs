@@ -91,7 +91,10 @@ namespace ImagingTool.Services
                     var psi = new ProcessStartInfo
                     {
                         FileName = _settings.WimlibPath,
-                        Arguments = $"extract \"{sourceWim}\" 1 \"{wimPath}\\{name}\" --dest-dir=\"{dest}\" --no-acls",
+                        // dest-dir must be the parent folder (e.g. C:\Program Files) so wimlib
+                        // places the app directory there directly. Using just "C:" would drop
+                        // the path structure and put everything at the root.
+                        Arguments = $"extract \"{sourceWim}\" 1 \"{wimPath}\\{name}\" --dest-dir=\"{dest + wimPath}\" --no-acls",
                         UseShellExecute = false,
                         CreateNoWindow = true,
                         RedirectStandardOutput = true,
