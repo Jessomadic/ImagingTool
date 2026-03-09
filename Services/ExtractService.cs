@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Microsoft.Win32;
 using ImagingTool.Helpers;
 
@@ -63,24 +64,188 @@ namespace ImagingTool.Services
         {
             Console.WriteLine("\n--- Extracting file system ---");
             string dest = targetRoot.TrimEnd('\\', '/');
+            var failedPrograms = new List<string>();
 
+            // Wimlib's extract creates ALL directories first, then writes file data.
+            // If it hits a locked directory during the dir-creation pass it aborts before
+            // writing anything — leaving empty folder skeletons everywhere.
+            //
+            // DISM mounts the WIM as a read-only virtual filesystem; robocopy then copies
+            // file-by-file with /R:0 so locked files are individually skipped rather than
+            // aborting the entire tree. Falls back to wimlib extract if DISM can't mount
+            // (e.g. DISM incompatibility with solid WIM format).
+
+            string mountDir = Path.Combine(Path.GetTempPath(), $"imgtool-mount-{Guid.NewGuid()}");
+            Directory.CreateDirectory(mountDir);
+
+            bool mounted = await TryMountWim(sourceWim, mountDir);
+            if (mounted)
+            {
+                try   { await CopyWithRobocopy(mountDir, dest, failedPrograms); }
+                finally
+                {
+                    await UnmountWim(mountDir);
+                    try { Directory.Delete(mountDir); } catch { }
+                }
+            }
+            else
+            {
+                try { Directory.Delete(mountDir); } catch { }
+                Console.ForegroundColor = ConsoleColor.Yellow;
+                Console.WriteLine("DISM mount unavailable — falling back to wimlib extract.");
+                Console.WriteLine("Locked files may cause some program folders to be empty.");
+                Console.ResetColor();
+                await ExtractFileSystemWimlib(sourceWim, dest, failedPrograms);
+            }
+
+            PrintFailureSummary(failedPrograms);
+        }
+
+        private static async Task<bool> TryMountWim(string sourceWim, string mountDir)
+        {
+            Console.WriteLine($"Mounting WIM read-only via DISM (this may take a minute)...");
+
+            var psi = new ProcessStartInfo
+            {
+                FileName = "dism.exe",
+                Arguments = $"/Mount-Wim /WimFile:\"{sourceWim}\" /index:1 /MountDir:\"{mountDir}\" /ReadOnly",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            };
+
+            try
+            {
+                using var process = new Process { StartInfo = psi };
+                process.Start();
+                // Drain both pipes to avoid hangs
+                var outTask = Task.Run(() => process.StandardOutput.ReadToEnd());
+                var errTask = Task.Run(() => process.StandardError.ReadToEnd());
+                await process.WaitForExitAsync();
+                await Task.WhenAll(outTask, errTask);
+
+                if (process.ExitCode == 0)
+                {
+                    Console.WriteLine("WIM mounted successfully.");
+                    return true;
+                }
+
+                string errText = (await errTask).Trim();
+                Console.WriteLine($"DISM mount failed (exit {process.ExitCode}){(string.IsNullOrEmpty(errText) ? "." : $": {errText}")}");
+                return false;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"DISM not available: {ex.Message}");
+                return false;
+            }
+        }
+
+        private static async Task CopyWithRobocopy(string mountDir, string dest, List<string> failedPrograms)
+        {
+            foreach (string wimPath in FileSystemPaths)
+            {
+                string sourcePath = mountDir + wimPath;
+                if (!Directory.Exists(sourcePath))
+                {
+                    Console.WriteLine($"\nSkipping {wimPath} — not found in image.");
+                    continue;
+                }
+
+                Console.WriteLine($"\nCopying: {wimPath}");
+
+                // Copy each top-level subdirectory separately so we know exactly which
+                // program/user folders fail rather than just knowing the whole tree had issues.
+                foreach (string sourceAppDir in Directory.GetDirectories(sourcePath))
+                {
+                    string appName = Path.GetFileName(sourceAppDir);
+                    string destAppDir = Path.Combine(dest + wimPath, appName);
+                    Directory.CreateDirectory(destAppDir);
+
+                    var psi = new ProcessStartInfo
+                    {
+                        FileName = "robocopy.exe",
+                        // /E  — recursive including empty dirs
+                        // /B  — backup mode (uses backup privileges, copies some otherwise-locked files)
+                        // /XJ — skip junctions/symlinks (avoid following them into system dirs)
+                        // /R:0 /W:0 — no retries; skip locked files immediately
+                        // /NJH /NJS /NFL /NDL — suppress noisy output
+                        Arguments = $"\"{sourceAppDir}\" \"{destAppDir}\" /E /B /XJ /R:0 /W:0 /NJH /NJS /NFL /NDL",
+                        UseShellExecute = false,
+                        CreateNoWindow = true,
+                    };
+
+                    using var robo = new Process { StartInfo = psi };
+                    robo.Start();
+                    await robo.WaitForExitAsync();
+
+                    // Robocopy exit < 8: success (0=nothing to do, 1=copied, 2=extra, 4=mismatch)
+                    // Robocopy exit >= 8: at least some files could not be copied
+                    if (robo.ExitCode >= 8)
+                        failedPrograms.Add($"{wimPath}\\{appName} (robocopy exit {robo.ExitCode})");
+                }
+            }
+        }
+
+        private static async Task UnmountWim(string mountDir)
+        {
+            Console.WriteLine("\nUnmounting WIM...");
+            var psi = new ProcessStartInfo
+            {
+                FileName = "dism.exe",
+                Arguments = $"/Unmount-Wim /MountDir:\"{mountDir}\" /Discard",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            };
+
+            try
+            {
+                using var process = new Process { StartInfo = psi };
+                process.Start();
+                var outTask = Task.Run(() => process.StandardOutput.ReadToEnd());
+                var errTask = Task.Run(() => process.StandardError.ReadToEnd());
+                await process.WaitForExitAsync();
+                await Task.WhenAll(outTask, errTask);
+                Console.WriteLine(process.ExitCode == 0
+                    ? "WIM unmounted."
+                    : $"Warning: DISM unmount returned {process.ExitCode} — mount point may need manual cleanup: dism /Unmount-Wim /MountDir:\"{mountDir}\" /Discard");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Warning: Could not unmount WIM: {ex.Message}");
+                Console.WriteLine($"  Manual cleanup: dism /Unmount-Wim /MountDir:\"{mountDir}\" /Discard");
+            }
+        }
+
+        private async Task ExtractFileSystemWimlib(string sourceWim, string dest, List<string> failedPrograms)
+        {
             foreach (string wimPath in FileSystemPaths)
             {
                 Console.WriteLine($"\nExtracting: {wimPath}");
-                // --tolerant skips files/directories that can't be written (e.g. locked by
-                // running services like Office ClickToRun) instead of aborting the whole tree.
                 string args = $"extract \"{sourceWim}\" 1 \"{wimPath}\" --dest-dir=\"{dest}\" --no-acls --tolerant";
                 bool ok = await _processRunner.RunProcessAsync(_settings.WimlibPath, args, "WimLib Extract");
                 if (!ok)
-                {
-                    Console.ForegroundColor = ConsoleColor.Yellow;
-                    Console.WriteLine($"  Warning: Some files in {wimPath} could not be extracted.");
-                    Console.WriteLine("  This is normal if services are running that hold locks on their directories");
-                    Console.WriteLine("  (e.g. Office ClickToRun, antivirus, VPN clients). Those programs will");
-                    Console.WriteLine("  need to be reinstalled. Everything else should have extracted fine.");
-                    Console.ResetColor();
-                }
+                    failedPrograms.Add(wimPath);
             }
+        }
+
+        private static void PrintFailureSummary(List<string> failedPrograms)
+        {
+            if (failedPrograms.Count == 0) return;
+
+            Console.WriteLine();
+            Console.ForegroundColor = ConsoleColor.Yellow;
+            Console.WriteLine($"--- {failedPrograms.Count} item(s) could not be fully restored ---");
+            Console.WriteLine("These had locked files held by running services. Their folder");
+            Console.WriteLine("structure exists but the files inside are incomplete or missing.");
+            Console.WriteLine("You will need to reinstall them:");
+            Console.WriteLine();
+            foreach (string p in failedPrograms)
+                Console.WriteLine($"  • {p}");
+            Console.ResetColor();
         }
 
         private async Task MergeHklmRegistry(string sourceWim)
