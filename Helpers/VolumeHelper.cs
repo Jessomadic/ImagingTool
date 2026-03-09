@@ -49,15 +49,19 @@ namespace ImagingTool.Helpers
                     return false;
                 }
 
+                // ReadToEndAsync + Task.WaitAny gives us a real timeout without blocking
+                // on .Result before the pipe is drained (WaitForExit(int) does not guarantee
+                // the async pipe has been fully read before returning).
                 var outputTask = process.StandardOutput.ReadToEndAsync();
-                if (!process.WaitForExit(5000))
+                if (Task.WaitAny(new Task[] { outputTask }, 5000) < 0)
                 {
                     Console.WriteLine("Warning: fsutil process timed out. Assuming volume is not dirty.");
                     try { process.Kill(); } catch { /* ignore */ }
                     return false;
                 }
 
-                string output = outputTask.Result;
+                process.WaitForExit(1000);
+                string output = outputTask.Result; // Task is already complete
                 if (process.ExitCode == 0 && !string.IsNullOrWhiteSpace(output))
                 {
                     Console.WriteLine($"fsutil output: {output.Trim()}");

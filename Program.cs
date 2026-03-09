@@ -74,14 +74,7 @@ namespace ImagingTool
                 return;
             }
 
-            Console.WriteLine("\nPlease select an operation:");
-            Console.WriteLine("  1. Backup System Drive");
-            Console.WriteLine("  2. Restore System Image");
-            Console.WriteLine("  3. Verify WIM Image");
-            Console.WriteLine("  4. Extract to Existing Install");
-            Console.Write("Enter choice (1, 2, 3, or 4): ");
-            string? choice = Console.ReadLine();
-
+            // Parse CLI args first so we can skip the interactive menu in non-interactive runs.
             string? destinationArg = args
                 .FirstOrDefault(a => a.StartsWith("-dest=", StringComparison.OrdinalIgnoreCase))
                 ?.Substring("-dest=".Length).Trim('"');
@@ -100,6 +93,23 @@ namespace ImagingTool
             string? extractDstArg = args
                 .FirstOrDefault(a => a.StartsWith("-extractdst=", StringComparison.OrdinalIgnoreCase))
                 ?.Substring("-extractdst=".Length).Trim('"');
+
+            bool hasCliMode = !string.IsNullOrWhiteSpace(destinationArg) ||
+                              (!string.IsNullOrWhiteSpace(sourceArg) && !string.IsNullOrWhiteSpace(targetArg)) ||
+                              !string.IsNullOrWhiteSpace(verifyArg) ||
+                              !string.IsNullOrWhiteSpace(extractSrcArg);
+
+            string? choice = null;
+            if (!hasCliMode)
+            {
+                Console.WriteLine("\nPlease select an operation:");
+                Console.WriteLine("  1. Backup System Drive");
+                Console.WriteLine("  2. Restore System Image");
+                Console.WriteLine("  3. Verify WIM Image");
+                Console.WriteLine("  4. Extract to Existing Install");
+                Console.Write("Enter choice (1, 2, 3, or 4): ");
+                choice = Console.ReadLine();
+            }
 
             bool isBackup = choice == "1" || (!string.IsNullOrWhiteSpace(destinationArg) && string.IsNullOrWhiteSpace(sourceArg));
             bool isRestore = choice == "2" || (!string.IsNullOrWhiteSpace(sourceArg) && !string.IsNullOrWhiteSpace(targetArg));

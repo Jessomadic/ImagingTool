@@ -121,8 +121,12 @@ namespace ImagingTool.Services
                     return;
                 }
 
-                // Print any other stderr line in red so the user can see what went wrong.
-                if (!string.IsNullOrWhiteSpace(line))
+                // Only flag lines that look like actual errors, not informational stderr output.
+                bool isError = line.IndexOf("ERROR", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                               line.IndexOf("Failed", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                               line.IndexOf("Cannot", StringComparison.OrdinalIgnoreCase) >= 0;
+
+                if (isError)
                 {
                     Console.ForegroundColor = ConsoleColor.Red;
                     Console.WriteLine($"\n[WimLib Error] {line}");
