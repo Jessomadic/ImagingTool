@@ -1,5 +1,3 @@
-using System.Globalization;
-using System.Text.RegularExpressions;
 using System.Windows.Forms;
 using ImagingTool.Helpers;
 
@@ -111,44 +109,39 @@ namespace ImagingTool.Services
             string targetDirectory = targetDrive + "\\";
             var wimApplyArgs = $"apply \"{sourceWim}\" 1 \"{targetDirectory}\" --check";
 
-            object consoleLock = new object();
+            bool wimlibReportedError = false;
 
-            void onLine(string line)
+            void onStderrLine(string line)
             {
                 if (line.StartsWith("[WARNING]", StringComparison.OrdinalIgnoreCase))
                 {
-                    lock (consoleLock)
-                    {
-                        Console.ForegroundColor = ConsoleColor.Yellow;
-                        Console.WriteLine($"\n[WimLib Warning] {line}");
-                        Console.ResetColor();
-                    }
+                    Console.ForegroundColor = ConsoleColor.Yellow;
+                    Console.WriteLine($"\n[WimLib Warning] {line}");
+                    Console.ResetColor();
                     return;
                 }
 
-                var match = Regex.Match(line,
-                    @"(\d+(?:[.,]\d+)?)\s*GiB\s*/\s*(\d+(?:[.,]\d+)?)\s*GiB\s*\((\d+)\s*%\s*done\)",
-                    RegexOptions.IgnoreCase);
-
-                if (!match.Success) return;
-                if (!double.TryParse(match.Groups[1].Value.Replace(',', '.'), NumberStyles.Any, CultureInfo.InvariantCulture, out double processedGiB)) return;
-                if (!double.TryParse(match.Groups[2].Value.Replace(',', '.'), NumberStyles.Any, CultureInfo.InvariantCulture, out double totalGiB)) return;
-                if (!double.TryParse(match.Groups[3].Value, NumberStyles.Any, CultureInfo.InvariantCulture, out double percentage)) return;
-
-                double remainingGiB = totalGiB - processedGiB;
-                lock (consoleLock)
+                // Print any other stderr line in red so the user can see what went wrong.
+                if (!string.IsNullOrWhiteSpace(line))
                 {
-                    string progressLine =
-                        $"\r{percentage:F1}% | {processedGiB:F2}/{totalGiB:F2} GiB | Left: {remainingGiB:F2} GiB";
-                    Console.Write(new string(' ', VolumeHelper.SafeConsoleWidth()) + "\r");
-                    Console.Write(progressLine.PadRight(VolumeHelper.SafeConsoleWidth()));
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.WriteLine($"\n[WimLib Error] {line}");
+                    Console.ResetColor();
+                    wimlibReportedError = true;
                 }
             }
 
-            bool wimlibSuccess = await _processRunner.RunProcessWithProgressAsync(
-                _settings.WimlibPath, wimApplyArgs, "WimLib Apply", onLine);
+            bool wimlibSuccess = await _processRunner.RunProcessWithStderrAsync(
+                _settings.WimlibPath, wimApplyArgs, "WimLib Apply", onStderrLine);
 
-            Console.Write(new string(' ', VolumeHelper.SafeConsoleWidth()) + "\r");
+            if (wimlibReportedError)
+            {
+                Console.ForegroundColor = ConsoleColor.Yellow;
+                Console.WriteLine("\nWarning: WimLib reported errors on some files during restore (see above).");
+                Console.WriteLine("Registry hive files or system files may not have been restored correctly.");
+                Console.WriteLine("Consider running Extract (option 4) to re-import the registry from the WIM.");
+                Console.ResetColor();
+            }
 
             if (!wimlibSuccess)
                 throw new Exception("WimLib apply process failed. Cannot proceed with boot configuration.");

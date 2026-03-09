@@ -14,6 +14,76 @@ namespace ImagingTool.Helpers
             });
         }
 
+        public async Task<bool> RunProcessWithStderrAsync(
+            string fileName, string arguments, string processName, Action<string> onStderrLine)
+        {
+            Console.WriteLine($"\nExecuting {processName} command:");
+            Console.WriteLine($"{fileName} {arguments}\n");
+
+            var psi = new ProcessStartInfo
+            {
+                FileName = fileName,
+                Arguments = arguments,
+                RedirectStandardOutput = false,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                StandardErrorEncoding = Encoding.UTF8
+            };
+
+            try
+            {
+                using var process = new Process { StartInfo = psi };
+
+                if (!process.Start())
+                    throw new InvalidOperationException($"Failed to start process: {fileName}");
+
+                var stderrTask = Task.Run(async () =>
+                {
+                    var sb = new StringBuilder();
+                    var buf = new char[4096];
+                    int n;
+                    while ((n = await process.StandardError.ReadAsync(buf, 0, buf.Length)) > 0)
+                    {
+                        for (int i = 0; i < n; i++)
+                        {
+                            char c = buf[i];
+                            if (c == '\r' || c == '\n')
+                            {
+                                if (sb.Length > 0) { onStderrLine(sb.ToString()); sb.Clear(); }
+                            }
+                            else { sb.Append(c); }
+                        }
+                    }
+                    if (sb.Length > 0) onStderrLine(sb.ToString());
+                });
+
+                await process.WaitForExitAsync();
+                await stderrTask;
+
+                Console.WriteLine($"\n{processName} process finished.");
+
+                if (process.ExitCode != 0)
+                {
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.WriteLine($"{processName} exited with error code: {process.ExitCode}.");
+                    Console.ResetColor();
+                    return false;
+                }
+
+                Console.WriteLine($"{processName} completed successfully (Exit Code: {process.ExitCode}).");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine($"\n--- Error executing {processName} ---");
+                Console.WriteLine($"Message: {ex.Message}");
+                Console.ResetColor();
+                return false;
+            }
+        }
+
         public async Task<bool> RunProcessWithProgressAsync(
             string fileName, string arguments, string processName, Action<string> onLine)
         {

@@ -16,9 +16,9 @@ public class RestoreServiceTests
         DotNetRuntimeInstallerUrl = "https://example.com/dotnet-installer.exe"
     };
 
-    // Helper: sets up the mock so wimlib (RunProcessWithProgressAsync) returns the given result
+    // Helper: sets up the mock so wimlib (RunProcessWithStderrAsync) returns the given result
     private static void SetupWimlib(Mock<IProcessRunner> mock, bool returns) =>
-        mock.Setup(r => r.RunProcessWithProgressAsync(
+        mock.Setup(r => r.RunProcessWithStderrAsync(
                 It.IsAny<string>(),
                 It.Is<string>(a => a.Contains("apply")),
                 It.IsAny<string>(),
@@ -40,7 +40,7 @@ public class RestoreServiceTests
         var service = new RestoreService(CreateSettings(), mockRunner.Object);
         await service.ApplyWimImageAndConfigureBoot(@"D:\backup.wim", "E:");
 
-        mockRunner.Verify(r => r.RunProcessWithProgressAsync(
+        mockRunner.Verify(r => r.RunProcessWithStderrAsync(
             It.IsAny<string>(),
             It.Is<string>(a => a.Contains("apply")),
             "WimLib Apply",
@@ -91,7 +91,7 @@ public class RestoreServiceTests
         var service = new RestoreService(CreateSettings(), mockRunner.Object);
         await service.ApplyWimImageAndConfigureBoot(@"D:\backup.wim", "E:");
 
-        mockRunner.Verify(r => r.RunProcessWithProgressAsync(
+        mockRunner.Verify(r => r.RunProcessWithStderrAsync(
             It.IsAny<string>(),
             It.Is<string>(a => a.Contains(@"D:\backup.wim")),
             "WimLib Apply",
@@ -108,7 +108,7 @@ public class RestoreServiceTests
         var service = new RestoreService(CreateSettings(), mockRunner.Object);
         await service.ApplyWimImageAndConfigureBoot(@"D:\backup.wim", "E:");
 
-        mockRunner.Verify(r => r.RunProcessWithProgressAsync(
+        mockRunner.Verify(r => r.RunProcessWithStderrAsync(
             It.IsAny<string>(),
             It.Is<string>(a => a.Contains(@"E:\")),
             "WimLib Apply",
