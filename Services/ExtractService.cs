@@ -42,6 +42,43 @@ namespace ImagingTool.Services
         private static readonly HashSet<string> SkipTopLevelKeys =
             new(StringComparer.OrdinalIgnoreCase) { "Classes", "Microsoft", "WOW6432Node" };
 
+        // Directory names that must never be extracted from a backup onto an existing system.
+        // These are runtime/framework components that must be installed via their own installers —
+        // blindly overwriting them with files from a backup can corrupt the target machine's
+        // runtime environment (e.g. extracting an old .NET or VC++ onto a newer installed version).
+        private static readonly HashSet<string> NeverExtractNames = new(StringComparer.OrdinalIgnoreCase)
+        {
+            // .NET runtimes — must be installed via official installer
+            "dotnet",
+
+            // Shared C/C++ runtimes and COM components — version-sensitive, installer-managed
+            "Common Files",
+
+            // .NET Framework reference assemblies — tied to SDK/Windows version
+            "Reference Assemblies",
+
+            // Build tooling — not a runtime but version-sensitive and installer-managed
+            "MSBuild",
+
+            // Windows OS components — should never be overwritten by a user backup
+            "Windows NT",
+            "Windows Defender",
+            "Windows Defender Advanced Threat Protection",
+            "Windows Mail",
+            "Windows Media Player",
+            "Windows Photo Viewer",
+            "Windows Sidebar",
+            "Internet Explorer",
+
+            // AppX / Store package directories — managed exclusively by Windows
+            "WindowsApps",
+            "ModifiableWindowsApps",
+
+            // PowerShell — version-sensitive, managed by Windows/WinGet
+            "WindowsPowerShell",
+            "PackageManagement",
+        };
+
         private static readonly string RegExePath =
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "reg.exe");
 
@@ -108,6 +145,15 @@ namespace ImagingTool.Services
                 foreach (string subDir in Directory.GetDirectories(destPath))
                 {
                     string name = Path.GetFileName(subDir);
+
+                    // Skip runtime/framework directories — extracting these from a backup onto
+                    // an existing system can corrupt the installed runtime version.
+                    if (NeverExtractNames.Contains(name))
+                    {
+                        Console.WriteLine($"    {name}... skipped (runtime/framework — install separately)");
+                        continue;
+                    }
+
                     Console.Write($"    {name}... ");
 
                     var psi = new ProcessStartInfo
