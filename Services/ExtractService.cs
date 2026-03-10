@@ -91,7 +91,7 @@ namespace ImagingTool.Services
             foreach (string wimPath in paths)
             {
                 Console.WriteLine($"\nExtracting: {wimPath}");
-                string args = $"extract \"{sourceWim}\" 1 \"{wimPath}\" --dest-dir=\"{dest}\" --no-acls";
+                string args = $"extract \"{sourceWim}\" 1 \"{wimPath}\" --dest-dir=\"{dest}\" --no-acls --no-attributes";
                 bool ok = await _processRunner.RunProcessAsync(_settings.WimlibPath, args, "WimLib Extract");
                 if (ok) continue;
 
@@ -116,7 +116,7 @@ namespace ImagingTool.Services
                         // dest-dir must be the parent folder (e.g. C:\Program Files) so wimlib
                         // places the app directory there directly. Using just "C:" would drop
                         // the path structure and put everything at the root.
-                        Arguments = $"extract \"{sourceWim}\" 1 \"{wimPath}\\{name}\" --dest-dir=\"{dest + wimPath}\" --no-acls",
+                        Arguments = $"extract \"{sourceWim}\" 1 \"{wimPath}\\{name}\" --dest-dir=\"{dest + wimPath}\" --no-acls --no-attributes",
                         UseShellExecute = false,
                         CreateNoWindow = true,
                         RedirectStandardOutput = true,
