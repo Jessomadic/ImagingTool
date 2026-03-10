@@ -182,12 +182,14 @@ namespace ImagingTool.Services
                 // Also extract the transaction log files in one batched call (OPT-2).
                 // reg.exe load needs these present when the hive was captured live (dirty bit set).
                 // Failures are ignored — logs may not exist in the WIM if cleanly committed.
+                // --nullglob silently skips log files that don't exist in the WIM
+                // (they may not be captured if the hive was cleanly committed at snapshot time).
                 string logBatchArgs =
                     $"extract \"{sourceWim}\" 1 " +
                     $"\"\\Windows\\System32\\config\\SOFTWARE.LOG\" " +
                     $"\"\\Windows\\System32\\config\\SOFTWARE.LOG1\" " +
                     $"\"\\Windows\\System32\\config\\SOFTWARE.LOG2\" " +
-                    $"--dest-dir=\"{tempDir}\" --no-acls";
+                    $"--dest-dir=\"{tempDir}\" --no-acls --nullglob";
                 await _processRunner.RunProcessAsync(_settings.WimlibPath, logBatchArgs, "WimLib Extract");
 
                 if (!extracted)
